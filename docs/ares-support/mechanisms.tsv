@@ -1,0 +1,111 @@
+id	milestone	name	depends	vera_hint	vera_doc	keys	keys_vera_literal	keys_unused_or_unscanned	hotspots
+F.readers	M1	Ares 读取器语义（Valueable/Nullable/Promotable/列表/none/长度上限）		partial	src/rules/ini_value.rs	0	0	0	0
+F.directives	M1	#include 与 [节]:[父节] 继承	F.readers	done	docs/ini-directives.md	0	0	0	0
+F.csf	M1	补充 CSF 字符串表		done	tools/rules_oracle/ares_csf.md	0	0	0	2
+F.armor	M1	[ArmorTypes] 自定义护甲与 Verses	F.readers	done	docs/ares-custom-armor.md	1	1	1	1
+F.radtypes	M1	[RadiationTypes] 辐射类型	F.readers	none		9	1	9	0
+F.prereq	M1	[GenericPrerequisites] 与 Prerequisite.Lists/Theaters/StolenTechs	F.readers	partial	docs/ares-prerequisites.md	3	0	3	2
+F.globalcontrols	M1	[GlobalControls] 与全局开关	F.readers	none		5	3	5	0
+F.cursors	M1	[MouseCursors] 与各类 Cursor.* 键	F.readers	partial		12	1	1	2
+F.save	M1	扩展状态存档（无键）		partial		0	0	0	2
+T.emp	M2	EMP（单位/弹头/建筑/超武共用状态）	F.readers	done	docs/ares-emp.md	10	9	3	1
+T.driver	M2	驾驶员、偷车、KillDriver、Operator	T.crew	done		18	17	6	0
+T.crew	M2	乘员与幸存者		done		9	7	3	0
+T.factory	M2	BuiltAt、Factory.ExplicitOnly、FactoryOwners	F.prereq	done	tools/rules_oracle/ares_factory_owners.md	7	7	2	2
+T.cameo	M2	PCX 图标与图标调色板		partial	docs/ares-pcx-cameos.md	3	2	3	1
+T.ammo	M2	步兵/武器弹药与装填		partial		6	2	2	5
+T.ifv	M2	IFV 扩展模式与乘客炮塔		partial		2	1	1	0
+T.manual	M2	禁止手动开火/进入/卸载/守卫、不可出售		partial		7	2	2	0
+T.convert	M2	类型转换（Convert.*）		done		4	3	3	0
+T.typeselect	M2	GroupAs 与类型选择		done		2	2	1	0
+T.bounty	M2	击杀赏金		done		6	6	2	0
+T.hunterseeker	M2	HunterSeeker 单位参数		done	docs/ares-hunter-seeker.md	13	3	1	1
+T.keepalive	M2	House 存活判定 KeepAlive		done	docs/ares-house-survival.md	1	1	0	0
+X.attacheffect	M2	AttachEffect	F.readers	partial	docs/ares-attach-effect.md	17	15	10	0
+H.country	M2	Country 展示、载入画面、权重、ParentCountry		done	docs/ares-country-presentation.md	15	15	11	2
+H.paradrop	M2	ParaDrop 覆盖链 Country→Side→Rules		done	docs/ares-country-paradrop.md	8	8	6	0
+H.powerplants	M2	AI.PowerPlants		done	docs/ares-country-powerplants.md	1	1	1	0
+H.side	M2	Side 默认值与 EVA.Tag		done	docs/ares-side-defaults.md	4	4	0	0
+H.sidepresent	M2	Side 展示：计分、对话框背景、图形文字、侧栏文件、颜色、载入主题	H.side	partial		22	22	20	6
+S.core	M2	超武通用：类型、显示、文本、EVA、光照、动画、声音、次数	F.readers	partial		60	35	28	9
+S.money	M2	超武费用与持续扣费	S.core	done	docs/ares-superweapon-money.md	6	3	2	0
+S.gates	M2	超武建筑门槛与 House 限制	S.core	done	docs/ares-superweapon-building-gates.md	6	6	5	0
+S.ai	M2	超武 AI 使用与目标选择	S.core	partial		7	7	3	0
+S.generic	M2	GenericWarhead 超武	S.core	done	docs/ares-generic-warhead.md	0	0	0	0
+S.unitdelivery	M2	UnitDelivery 超武	S.core	done	docs/ares-unit-delivery.md	3	2	3	0
+S.hunterseeker	M2	HunterSeeker 超武	S.core,T.hunterseeker	done	docs/ares-hunter-seeker.md	3	3	3	0
+S.emp	M2	EMPulse 超武	S.core,T.emp	partial	docs/ares-emp.md	5	0	5	0
+W.filter	M2	弹头作用对象与伤害门槛		partial		8	4	1	1
+U.eva	M2	EVA 语音扩展		done	docs/ares-eva.md	0	0	0	0
+U.palettes	M2	建筑 SHP 调色板		done	docs/ares-building-palettes.md	0	0	0	0
+T.cloak	M3	隐身阶段、条件隐身、隐身/显形音效		partial		10	2	0	3
+T.spotlight	M3	探照灯		partial		8	8	2	4
+T.promotion	M3	晋升经验、晋升类型、闪光、能力、徽章		partial		27	6	6	0
+T.buildtime	M3	建造时间与低电惩罚		none		7	0	6	0
+T.passengers	M3	乘客容量、允许/禁止列表、初始载荷		none		7	2	5	0
+T.carryall	M3	Carryall 吊运限制		none		2	0	0	0
+T.crush	M3	碾压伤害与全能碾压		none		4	0	2	0
+T.harvester	M3	采矿车扫描与精炼厂存储		none		7	0	1	0
+T.tibunit	M3	单位与矿石：免疫、残留、溢出、转化		none		4	0	0	0
+T.selfheal	M3	自愈		none		4	1	2	0
+T.damagefx	M3	受损烟雾/火花粒子		none		6	0	2	0
+T.fall	M3	降落伞、下落速度、坠毁		partial		9	4	5	0
+T.missile	M3	自定义导弹单位		none		9	1	4	2
+T.dig	M3	地下单位钻入钻出		none		5	0	3	0
+T.jammer	M3	雷达干扰、抑制/指示范围、传感器警告	S.core	none		4	2	0	5
+T.gap	M3	裂缝产生器半径		none		2	2	0	0
+T.drain	M3	能量/资金抽取（Drain）		none		2	0	0	0
+T.cloning	M3	克隆设施		none		4	0	0	0
+T.reverse	M3	逆向工程与可逆转		none		4	0	1	0
+T.ui	M3	敌方显示名、范围指示圈、透明度、扳手图标		none		5	0	1	0
+T.misc	M3	单位杂项：炮塔速度、Gattling、部署朝向、空速、Assaulter 等		none		15	2	7	7
+T.dehardcode	M3	去硬编码身份（IsCow/IsDesolator/IsBomb）		none		4	0	0	0
+B.rubble	M3	建筑废墟		none		10	0	0	0
+B.academy	M3	Academy 老兵加成与 VeteranBuildings	T.promotion	none		7	1	4	6
+B.gates	M3	门音效与可通行建筑		none		3	0	0	1
+B.foundation	M3	自定义地基与实体高度		partial		7	4	4	0
+B.misc	M3	建筑杂项：建造/出售时间、停靠、可回收、消息、钱数显示		none		11	1	5	0
+B.engineer	M3	工程师：多工程师、伤害、修理、占领科技		none		6	1	2	0
+B.togglepower	M3	手动开关电		none		3	1	0	0
+B.degrade	M3	建筑退化		none		7	0	3	0
+B.secretlab	M3	秘密实验室		none		2	0	1	0
+B.fake	M3	假建筑		none		1	0	1	0
+B.tunnel	M3	[TunnelTypes] 隧道网络		none		2	1	2	0
+B.ai	M3	AI 基地建造计数与内圈		partial		6	2	2	2
+A.anim	M3	动画：自定义调色板、伤害延迟、步兵归属、粒子范围、武器		partial		6	2	0	0
+R.tiberium	M3	矿石伤害/治疗/爆炸		none		14	2	1	1
+R.particles	M3	粒子类型/粒子系统扩展		none		1	0	1	0
+R.ai	M3	AI 与玩家自动反击、团队报复		none		4	0	2	0
+R.misc	M3	全局杂项：随机箱钱数、显示延迟、盘状激光动画		none		4	1	1	1
+H.start	M3	多人开局单位与基地车		none		3	0	2	0
+B.spy	M4	间谍渗透效果	B.engineer	none		20	0	17	2
+B.prism	M4	Prism 转发		none		13	0	13	5
+B.occupy	M4	驻军（UC）与掠夺		none		5	0	0	0
+B.trench	M4	战壕	B.occupy	none		2	0	1	3
+B.firestorm	M4	火风暴墙		none		7	0	3	13
+W.beams	M4	波束、激光、电弧、磁轨炮		partial		21	2	7	4
+W.ivanbomb	M4	疯狂伊文炸弹		none		14	0	13	3
+W.abductor	M4	Abductor 绑架		none		6	0	4	0
+W.weaponmisc	M4	武器杂项：ApplyDamage、射程		none		2	0	0	1
+W.damage	M4	相对伤害、Culling、部署状态伤害	W.filter	none		9	0	3	0
+W.effects	M4	弹头效果：离子炮、涟漪、闪光、声呐、禁武、预冲击动画、桥		none		17	0	7	1
+W.death	M4	死亡表现与死亡武器抑制		none		8	0	2	3
+W.mctemporal	M4	心控永久与超时空		none		3	0	0	0
+P.projectile	M4	抛射体：空爆、分裂、重定向、散布、受建筑/战壕阻挡		none		11	6	4	0
+S.chrono	M5	ChronoSphere/ChronoWarp	S.core	none		9	0	9	0
+S.dominator	M5	Dominator 心控超武	S.core,W.mctemporal	none		12	0	12	0
+S.droppod	M5	DropPod	S.core	none		8	0	5	1
+S.mutator	M5	GeneticMutator	S.core	none		4	0	4	0
+S.lightning	M5	LightningStorm	S.core	none		18	0	17	0
+S.nuke	M5	Nuke	S.core	none		4	0	4	0
+S.protect	M5	Protect（铁幕/力场）	S.core,T.ic	none		3	0	3	0
+S.spyplane	M5	SpyPlane	S.core	none		3	0	3	0
+S.sonar	M5	SonarPulse	S.core	none		1	0	1	0
+S.paradrop	M5	ParaDrop 超武	S.core,H.paradrop	partial		0	0	0	0
+S.firewall	M5	Firewall 超武	S.core,B.firestorm	none		0	0	0	0
+T.ic	M6	铁幕/力场/超时空修正与免疫		none		9	0	2	0
+T.berserk	M6	狂暴与绑架免疫		none		4	1	2	0
+T.poweredby	M6	PoweredBy 供电单位	T.emp	partial		2	0	0	3
+U.shell	M7	主菜单/战役/影片列表/RMG/遭遇战设置		none		44	8	44	8
+U.triggers	M7	新触发动作/事件（TAction/TEvent）		none		0	0	0	2
+U.bugfixes	M7	无条件 Bugfix 钩子（无键）		none		0	0	0	44

@@ -40,6 +40,7 @@ Thumbs.db
 !/docs/capabilities.md
 !/docs/wasm.md
 !/docs/ares.md
+!/docs/ares-support/
 !/docs/ares-side-defaults.md
 !/docs/ares-country-presentation.md
 !/docs/ares-country-paradrop.md
