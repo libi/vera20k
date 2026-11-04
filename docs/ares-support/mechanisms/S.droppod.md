@@ -15,38 +15,40 @@
 
 | 键 | 类 | 类型 | 默认 | 读取位置 | 使用点状态 | VERA20K 字面量 |
 |---|---|---|---|---|---|---|
-| `DropPodMaximum` | Rules | Valueable<int> | 0 | src/Ext/Rules/Body.cpp:277 | check_0A_use | — |
-| `DropPodMinimum` | Rules | Valueable<int> | 0 | src/Ext/Rules/Body.cpp:276 | check_0A_use | — |
-| `DropPodTrailer` | Rules | Nullable<AnimTypeClass*> | (empty) | src/Ext/Rules/Body.cpp:274 | no_use_found | — |
-| `DropPodTypes` | Rules | ValueableVector<TechnoTypeClass*> | (empty) | src/Ext/Rules/Body.cpp:275 | check_0A_use | — |
-| `DropPod.Maximum` | SWType | — | — | src/Misc/SWTypes/DropPod.cpp:34 | unscanned | — |
-| `DropPod.Minimum` | SWType | — | — | src/Misc/SWTypes/DropPod.cpp:33 | unscanned | — |
-| `DropPod.Types` | SWType | — | — | src/Misc/SWTypes/DropPod.cpp:36 | unscanned | — |
-| `DropPod.Veterancy` | SWType | — | — | src/Misc/SWTypes/DropPod.cpp:35 | unscanned | — |
+| `DropPodMaximum` | Rules | Valueable<int> | 0 | src/Ext/Rules/Body.cpp:232 | ok | — |
+| `DropPodMinimum` | Rules | Valueable<int> | 0 | src/Ext/Rules/Body.cpp:231 | ok | — |
+| `DropPodTrailer` | Rules | Nullable<AnimTypeClass*> | (empty) | src/Ext/Rules/Body.cpp:229 | no_use_found | — |
+| `DropPodTypes` | Rules | ValueableVector<TechnoTypeClass*> | (empty) | src/Ext/Rules/Body.cpp:230 | ok | — |
+| `DropPod.Maximum` | SWType | Nullable<int> | (empty) | src/Misc/SWTypes/DropPod.cpp:36 | ok | — |
+| `DropPod.Minimum` | SWType | Nullable<int> | (empty) | src/Misc/SWTypes/DropPod.cpp:35 | ok | — |
+| `DropPod.Types` | SWType | ValueableVector<TechnoTypeClass*> | (empty) | src/Misc/SWTypes/DropPod.cpp:38 | ok | — |
+| `DropPod.Veterancy` | SWType | Valueable<double> | 2.0 | src/Misc/SWTypes/DropPod.cpp:37 | ok | — |
 
 ## 钩子（3）
 
-先读 3.0 反编译（`decompiled`），再读还原源码（`src`）；状态为 `kept` 的是 0.A 源码，函数体可能已被 3.0 修改。
+"源码"列的函数体已按 3.0 翻译或对照 3.0 核对（"3.0 核对"列为 ✓）；有疑问时以 3.0 反编译为准。`⚠改过` 表示 3.0 相对 0.A 改过这个钩子，源码中已是 3.0 写法。
 
-| gamemd 地址 | 钩子 | 状态 | 所在 gamemd 函数（上下文） | 3.0 反编译 | 源码 | VERA20K 已引用该函数 |
-|---|---|---|---|---|---|---|
-| 4B769B | `ScenarioClass_GenerateDropshipLoadout` | kept | 004B6C30 `Dropship__ShowSequence` | decompiled/functions/1002CCA0.c | src/Ext/Rules/Hooks.Dropships.cpp:7 | — |
-| 4B93BD | `ScenarioClass_GenerateDropshipLoadout_FreeAnims` | kept | 004B6C30 `Dropship__ShowSequence` | decompiled/functions/1002CCC0.c | src/Ext/Rules/Hooks.Dropships.cpp:75 | — |
-| 4B99A2 | `DropshipLoadout_WriteUnit` | kept | 004B9890 `FUN_004b9890` | decompiled/functions/1002CA30.c | src/Ext/Rules/Hooks.Dropships.cpp:14 | — |
+| gamemd 地址 | 钩子 | 状态 | 3.0 核对 | 所在 gamemd 函数（上下文） | 3.0 反编译 | 源码 | VERA20K 已引用该函数 |
+|---|---|---|---|---|---|---|---|
+| 4B769B | `ScenarioClass_GenerateDropshipLoadout` | kept | ✓ | 004B6C30 `Dropship__ShowSequence` | decompiled/functions/1002CCA0.c | src/Ext/Rules/Hooks.Dropships.cpp:7 | — |
+| 4B93BD | `ScenarioClass_GenerateDropshipLoadout_FreeAnims` | kept | ✓ | 004B6C30 `Dropship__ShowSequence` | decompiled/functions/1002CCC0.c | src/Ext/Rules/Hooks.Dropships.cpp:75 | — |
+| 4B99A2 | `DropshipLoadout_WriteUnit` | kept | ✓ | 004B9890 `FUN_004b9890` | decompiled/functions/1002CA30.c | src/Ext/Rules/Hooks.Dropships.cpp:14 | — |
 
 ## 非钩子函数
 
 | Ares 地址 | 函数 | 来源 | 3.0 反编译 |
 |---|---|---|---|
-| 1000B240 | BuildingTypeExt::ExtMap.LoadStatic [source_0.A,inferred] | 使用键 | decompiled/functions/1000B240.c |
-| 10070E40 | FUN_10070e40 [source_0.A] | 使用键 | decompiled/functions/10070E40.c |
+| 10070E40 | SW_DropPod::Activate [translated] | 使用键 | decompiled/functions/10070E40.c |
 | 10003990 | `CRT::strcmpi` | 被钩子调用 | decompiled/functions/10003990.c |
 | 1002CA20 | `Drawing::PrintUnicode` | 被钩子调用 | decompiled/functions/1002CA20.c |
 | 1002CA00 | `InputManagerClass::DoSomething` | 被钩子调用 | decompiled/functions/1002CA00.c |
 | 1002C9E0 | `SHPStruct::~SHPStruct` | 被钩子调用 | decompiled/functions/1002C9E0.c |
 | 100033C0 | `CRT::_delete` | 被钩子调用 | decompiled/functions/100033C0.c |
+| 10057C70 | `ContainerMapBase::find` | 被钩子调用 | decompiled/functions/10057C70.c |
+| 10061B00 | `Debug::LogFlushed_Severity` | 被钩子调用 | decompiled/functions/10061B00.c |
 | 1000AC70 | `Randomizer::RandomRanged` | 被钩子调用 | decompiled/functions/1000AC70.c |
 | 10009590 | `MapClass::Pathfinding_Find` | 被钩子调用 | decompiled/functions/10009590.c |
+| 10044030 | `TechnoExt::CreateWithDroppod` | 被钩子调用 | decompiled/functions/10044030.c |
 | 10011DE0 | `CellClass::GetNeighbourCell` | 被钩子调用 | decompiled/functions/10011DE0.c |
 
 ## 涉及的热点函数（1）

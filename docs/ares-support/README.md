@@ -15,6 +15,8 @@
 表格由 `tools/ares_support/build_catalog.py` 生成，索引页由 `build_index.py` 生成，机制划分规则在 `tools/ares_support/mechanisms.py`。
 
 本文档不重复写每个机制的逻辑：实现者（人或 AI）照索引页直接读 ares-src 工作区的代码，方法见第 6 节。
+数据基于 ares-src 的 `recover/inj-layout` 分支（`d310643a`，2026-11-04）：该版本的函数体已全部按 3.0 翻译或核对过，
+并能编译链接。`main` 分支（`10c1c922`）是中央合并后的旧版，保留钩子仍是 0.A 写法，不要用它。
 本文档中的地址、函数名和源码路径都只是线索，落地时按 [项目契约](../../AGENTS.md) 对照原生指令确认。
 
 ## 1. 目标与范围
@@ -25,8 +27,8 @@
 
 **范围内**：
 
-- 578 个 Ares ExtData 键，以及从还原源码扫描到的另外 210 个键（超武子类型、`[RadiationTypes]`、
-  `[TunnelTypes]`、Side 展示、界面与战役设置等），共 788 个；
+- 650 个 Ares ExtData 键（16 个加载函数读的 577 个，加 18 个超武类型读的 73 个），以及从还原源码扫描到的
+  另外 122 个键（`[RadiationTypes]`、`[TunnelTypes]`、Side 展示、界面与战役设置等），共 772 个；
 - 这些键在原生代码中的全部使用点；
 - 这些键依赖的、没有键的配套钩子，例如读取器、存档、热点函数里的跳转。
 
@@ -39,19 +41,21 @@
 
 | | 数量 |
 |---|---|
-| 键（ExtData / 源码扫描） | 788（578 / 210） |
-| 机制 | 110 |
+| 键（ExtData / 源码扫描） | 772（650 / 122） |
+| 机制 | 111 |
 | 已有 VERA20K 实现的机制（done / partial，来自 `docs/ares.md`，M0 复核） | 23 / 24 |
-| VERA20K 非测试源码中出现字面量的键 | 256 |
+| VERA20K 非测试源码中出现字面量的键 | 248 |
 | Ares 3.0 钩子 / 被钩的 gamemd 函数 | 1448 / 788 |
-| 热点函数（被多个机制钩住） | 127 |
+| 热点函数（被多个机制钩住） | 129 |
 
-Ares 侧数据的已知缺口（来自 Ares 3.0 还原工作区，下称 `ares-src`）：
+Ares 侧数据的已知缺口（来自 Ares 3.0 还原工作区，下称 `ares-src`；`catalog.tsv` 的 `use_status` 列）：
 
-- 264 个 ExtData 键的使用点只有 0.A 源码，3.0 可能改过；
-- 194 个 ExtData 键扫描不到使用点；
-- 210 个源码扫描键还没有做使用点扫描（`use_status=unscanned`）；
-- 使用点中标 `inferred` 的是按偏移推断的，有误判。例如 `Carryall.SizeLimit` 被错配到析构、晋升、探照灯等函数上。
+- `ok`（529 个）：所有使用函数都已按 3.0 翻译或核对过（`symbols/verified_30.tsv`）。
+  ares-src 自己的 `report/ini_coverage.tsv` 生成得比最后几轮核对早，其中 `check_0A_use` 标签已过时，这里按核对表重新计算；
+- `needs_check`（9 个）：有使用函数尚无源码，多为偏移推断的误判；
+- `no_use_found`（112 个）：扫描不到使用点；
+- `unscanned`（122 个）：源码扫描补上的键，还没有做使用点扫描；
+- 使用点中标 `inferred` 的是按偏移推断的，有误判。
 
 因此 `catalog.tsv` 是**任务清单**，不是规格。每个机制开工时都要先核实自己那部分数据（见第 6 节第 1 步）。
 
@@ -62,8 +66,9 @@ Ares 侧数据的已知缺口（来自 Ares 3.0 还原工作区，下称 `ares-s
    如果 Ares 3.0 的默认值本身就会改变行为（无条件修复，或默认值与原版不同），要单独立项，PR 中写明。
 3. **只扩展现有负责者。** 一个原生函数只有一份 Rust 实现。需要的逻辑已有负责者时，扩展那个负责者，
    不复制、不包装、不另起一份。缺读取器就先补读取器。
-4. **热点函数分两步改。** 第一步是纯重构，加扩展点，行为零变化；第二步才接入机制。
-5. **可单独回退。** 每个 PR 只做一件事，回退一个 PR 不应牵连其他机制。
+4. **热点函数先重构再接入。** 在同一个 PR 里分成两个提交：先是纯重构的扩展点（行为零变化），再接入机制。
+5. **一条链一个 PR。** 按项目契约，一条玩家可见的玩法链从证据、实现到集成在一个 PR 里完成，不拆成多个 PR，
+   也不叠未合并的分支。机制太大时，按契约以一种常见单位、武器或界面路径为界分成几条链，依次做。
 6. **三种构建都要通过**：默认、`ares`、`ares,phobos,npatch`（见 [跨扩展兼容](../npatch.md#cross-extension-compatibility)）。
    Phobos 和 Ares 同名的键（如 `AttachEffect.*`）、同一原生位置被两个扩展改动的情况，按那里的优先级规则处理。
 
@@ -104,17 +109,19 @@ Ares 侧数据的已知缺口（来自 Ares 3.0 还原工作区，下称 `ares-s
 
 ### M1 公共基础
 
+<!-- table:M1 -->
 | 机制 | 名称 | 键 | 依赖 | 现状 |
 |---|---|---|---|---|
-| `F.readers` | Ares 读取器语义（Valueable/Nullable/Promotable/列表/none/长度上限） | 0 | — | partial |
-| `F.directives` | #include 与 [节]:[父节] 继承 | 0 | F.readers | done |
-| `F.csf` | 补充 CSF 字符串表 | 0 | — | done |
-| `F.armor` | [ArmorTypes] 自定义护甲与 Verses | 1 | F.readers | done |
-| `F.radtypes` | [RadiationTypes] 辐射类型 | 9 | F.readers | none |
-| `F.prereq` | [GenericPrerequisites] 与 Prerequisite.Lists/Theaters/StolenTechs | 3 | F.readers | partial |
-| `F.globalcontrols` | [GlobalControls] 与全局开关 | 5 | F.readers | none |
-| `F.cursors` | [MouseCursors] 与各类 Cursor.* 键 | 12 | F.readers | partial |
-| `F.save` | 扩展状态存档（无键） | 0 | — | partial |
+| [`F.readers`](mechanisms/F.readers.md) | Ares 读取器语义（Valueable/Nullable/Promotable/列表/none/长度上限） | 0 | — | partial |
+| [`F.directives`](mechanisms/F.directives.md) | #include 与 [节]:[父节] 继承 | 0 | F.readers | done |
+| [`F.csf`](mechanisms/F.csf.md) | 补充 CSF 字符串表 | 0 | — | done |
+| [`F.armor`](mechanisms/F.armor.md) | [ArmorTypes] 自定义护甲与 Verses | 1 | F.readers | done |
+| [`F.radtypes`](mechanisms/F.radtypes.md) | [RadiationTypes] 辐射类型 | 9 | F.readers | none |
+| [`F.prereq`](mechanisms/F.prereq.md) | [GenericPrerequisites] 与 Prerequisite.Lists/Theaters/StolenTechs | 3 | F.readers | partial |
+| [`F.globalcontrols`](mechanisms/F.globalcontrols.md) | [GlobalControls] 与全局开关 | 4 | F.readers | none |
+| [`F.cursors`](mechanisms/F.cursors.md) | [MouseCursors] 与各类 Cursor.* 键 | 12 | F.readers | partial |
+| [`F.save`](mechanisms/F.save.md) | 扩展状态存档（无键） | 0 | — | partial |
+<!-- /table:M1 -->
 
 - 读取器（`F.readers`）对照 `ares-src` 的 `src/Utilities/TemplateDef.h`、`Parser.h`、`INIParser.h`，以及 3.0 中
   未命名的读取函数（`catalog.tsv` 的 `type` 列里出现的 `FUN_…`）。需要明确的语义包括：
@@ -128,87 +135,91 @@ Ares 侧数据的已知缺口（来自 Ares 3.0 还原工作区，下称 `ares-s
 
 这些机制在 VERA20K 中已经有负责者，缺的主要是剩余的键和使用点，风险最低。
 
+<!-- table:M2 -->
 | 机制 | 名称 | 键 | 依赖 | 现状 |
 |---|---|---|---|---|
-| `T.emp` | EMP（单位/弹头/建筑/超武共用状态） | 10 | F.readers | done |
-| `T.driver` | 驾驶员、偷车、KillDriver、Operator | 18 | T.crew | done |
-| `T.crew` | 乘员与幸存者 | 9 | — | done |
-| `T.factory` | BuiltAt、Factory.ExplicitOnly、FactoryOwners | 7 | F.prereq | done |
-| `T.cameo` | PCX 图标与图标调色板 | 3 | — | partial |
-| `T.ammo` | 步兵/武器弹药与装填 | 6 | — | partial |
-| `T.ifv` | IFV 扩展模式与乘客炮塔 | 2 | — | partial |
-| `T.manual` | 禁止手动开火/进入/卸载/守卫、不可出售 | 7 | — | partial |
-| `T.convert` | 类型转换（Convert.*） | 4 | — | done |
-| `T.typeselect` | GroupAs 与类型选择 | 2 | — | done |
-| `T.bounty` | 击杀赏金 | 6 | — | done |
-| `T.hunterseeker` | HunterSeeker 单位参数 | 13 | — | done |
-| `T.keepalive` | House 存活判定 KeepAlive | 1 | — | done |
-| `X.attacheffect` | AttachEffect | 17 | F.readers | partial |
-| `H.country` | Country 展示、载入画面、权重、ParentCountry | 15 | — | done |
-| `H.paradrop` | ParaDrop 覆盖链 Country→Side→Rules | 8 | — | done |
-| `H.powerplants` | AI.PowerPlants | 1 | — | done |
-| `H.side` | Side 默认值与 EVA.Tag | 4 | — | done |
-| `H.sidepresent` | Side 展示：计分、对话框背景、图形文字、侧栏文件、颜色、载入主题 | 22 | H.side | partial |
-| `S.core` | 超武通用：类型、显示、文本、EVA、光照、动画、声音、次数 | 60 | F.readers | partial |
-| `S.money` | 超武费用与持续扣费 | 6 | S.core | done |
-| `S.gates` | 超武建筑门槛与 House 限制 | 6 | S.core | done |
-| `S.ai` | 超武 AI 使用与目标选择 | 7 | S.core | partial |
-| `S.generic` | GenericWarhead 超武 | 0 | S.core | done |
-| `S.unitdelivery` | UnitDelivery 超武 | 3 | S.core | done |
-| `S.hunterseeker` | HunterSeeker 超武 | 3 | S.core,T.hunterseeker | done |
-| `S.emp` | EMPulse 超武 | 5 | S.core,T.emp | partial |
-| `W.filter` | 弹头作用对象与伤害门槛 | 8 | — | partial |
-| `U.eva` | EVA 语音扩展 | 0 | — | done |
-| `U.palettes` | 建筑 SHP 调色板 | 0 | — | done |
+| [`T.emp`](mechanisms/T.emp.md) | EMP（单位/弹头/建筑/超武共用状态） | 10 | F.readers | done |
+| [`T.driver`](mechanisms/T.driver.md) | 驾驶员、偷车、KillDriver、Operator | 18 | T.crew | done |
+| [`T.crew`](mechanisms/T.crew.md) | 乘员与幸存者 | 9 | — | done |
+| [`T.factory`](mechanisms/T.factory.md) | BuiltAt、Factory.ExplicitOnly、FactoryOwners | 7 | F.prereq | done |
+| [`T.cameo`](mechanisms/T.cameo.md) | PCX 图标与图标调色板 | 3 | — | partial |
+| [`T.ammo`](mechanisms/T.ammo.md) | 步兵/武器弹药与装填 | 6 | — | partial |
+| [`T.ifv`](mechanisms/T.ifv.md) | IFV 扩展模式与乘客炮塔 | 2 | — | partial |
+| [`T.manual`](mechanisms/T.manual.md) | 禁止手动开火/进入/卸载/守卫、不可出售 | 7 | — | partial |
+| [`T.convert`](mechanisms/T.convert.md) | 类型转换（Convert.*） | 4 | — | done |
+| [`T.typeselect`](mechanisms/T.typeselect.md) | GroupAs 与类型选择 | 2 | — | done |
+| [`T.bounty`](mechanisms/T.bounty.md) | 击杀赏金 | 6 | — | done |
+| [`T.hunterseeker`](mechanisms/T.hunterseeker.md) | HunterSeeker 单位参数 | 13 | — | done |
+| [`T.keepalive`](mechanisms/T.keepalive.md) | House 存活判定 KeepAlive | 1 | — | done |
+| [`X.attacheffect`](mechanisms/X.attacheffect.md) | AttachEffect | 17 | F.readers | partial |
+| [`H.country`](mechanisms/H.country.md) | Country 展示、载入画面、权重、ParentCountry | 15 | — | done |
+| [`H.paradrop`](mechanisms/H.paradrop.md) | ParaDrop 覆盖链 Country→Side→Rules | 6 | — | done |
+| [`H.powerplants`](mechanisms/H.powerplants.md) | AI.PowerPlants | 1 | — | done |
+| [`H.side`](mechanisms/H.side.md) | Side 默认值与 EVA.Tag | 4 | — | done |
+| [`H.sidepresent`](mechanisms/H.sidepresent.md) | Side 展示：计分、对话框背景、图形文字、侧栏文件、颜色、载入主题 | 19 | H.side | partial |
+| [`S.core`](mechanisms/S.core.md) | 超武通用：类型、显示、文本、EVA、光照、动画、声音、次数 | 60 | F.readers | partial |
+| [`S.money`](mechanisms/S.money.md) | 超武费用与持续扣费 | 6 | S.core | done |
+| [`S.gates`](mechanisms/S.gates.md) | 超武建筑门槛与 House 限制 | 6 | S.core | done |
+| [`S.ai`](mechanisms/S.ai.md) | 超武 AI 使用与目标选择 | 7 | S.core | partial |
+| [`S.generic`](mechanisms/S.generic.md) | GenericWarhead 超武 | 0 | S.core | done |
+| [`S.unitdelivery`](mechanisms/S.unitdelivery.md) | UnitDelivery 超武 | 3 | S.core | done |
+| [`S.hunterseeker`](mechanisms/S.hunterseeker.md) | HunterSeeker 超武 | 3 | S.core,T.hunterseeker | done |
+| [`S.emp`](mechanisms/S.emp.md) | EMPulse 超武 | 5 | S.core,T.emp | partial |
+| [`W.filter`](mechanisms/W.filter.md) | 弹头作用对象与伤害门槛 | 8 | — | partial |
+| [`U.eva`](mechanisms/U.eva.md) | EVA 语音扩展 | 0 | — | done |
+| [`U.palettes`](mechanisms/U.palettes.md) | 建筑 SHP 调色板 | 0 | — | done |
+<!-- /table:M2 -->
 
-重点：`S.core`（60 键）是 M5 所有超武子类型的前提，需要在 M2 内完成。
+重点：`S.core` 是 M5 所有超武子类型的前提，需要在 M2 内完成。
 
 ### M3 独立末端机制
 
 使用点集中在少数几个函数，不碰（或只轻触）热点函数，适合多人或多个代理同时做。
 
+<!-- table:M3 -->
 | 机制 | 名称 | 键 | 依赖 | 现状 |
 |---|---|---|---|---|
-| `T.cloak` | 隐身阶段、条件隐身、隐身/显形音效 | 10 | — | partial |
-| `T.spotlight` | 探照灯 | 8 | — | partial |
-| `T.promotion` | 晋升经验、晋升类型、闪光、能力、徽章 | 27 | — | partial |
-| `T.buildtime` | 建造时间与低电惩罚 | 7 | — | none |
-| `T.passengers` | 乘客容量、允许/禁止列表、初始载荷 | 7 | — | none |
-| `T.carryall` | Carryall 吊运限制 | 2 | — | none |
-| `T.crush` | 碾压伤害与全能碾压 | 4 | — | none |
-| `T.harvester` | 采矿车扫描与精炼厂存储 | 7 | — | none |
-| `T.tibunit` | 单位与矿石：免疫、残留、溢出、转化 | 4 | — | none |
-| `T.selfheal` | 自愈 | 4 | — | none |
-| `T.damagefx` | 受损烟雾/火花粒子 | 6 | — | none |
-| `T.fall` | 降落伞、下落速度、坠毁 | 9 | — | partial |
-| `T.missile` | 自定义导弹单位 | 9 | — | none |
-| `T.dig` | 地下单位钻入钻出 | 5 | — | none |
-| `T.jammer` | 雷达干扰、抑制/指示范围、传感器警告 | 4 | S.core | none |
-| `T.gap` | 裂缝产生器半径 | 2 | — | none |
-| `T.drain` | 能量/资金抽取（Drain） | 2 | — | none |
-| `T.cloning` | 克隆设施 | 4 | — | none |
-| `T.reverse` | 逆向工程与可逆转 | 4 | — | none |
-| `T.ui` | 敌方显示名、范围指示圈、透明度、扳手图标 | 5 | — | none |
-| `T.misc` | 单位杂项：炮塔速度、Gattling、部署朝向、空速、Assaulter 等 | 15 | — | none |
-| `T.dehardcode` | 去硬编码身份（IsCow/IsDesolator/IsBomb） | 4 | — | none |
-| `B.rubble` | 建筑废墟 | 10 | — | none |
-| `B.academy` | Academy 老兵加成与 VeteranBuildings | 7 | T.promotion | none |
-| `B.gates` | 门音效与可通行建筑 | 3 | — | none |
-| `B.foundation` | 自定义地基与实体高度 | 7 | — | partial |
-| `B.misc` | 建筑杂项：建造/出售时间、停靠、可回收、消息、钱数显示 | 11 | — | none |
-| `B.engineer` | 工程师：多工程师、伤害、修理、占领科技 | 6 | — | none |
-| `B.togglepower` | 手动开关电 | 3 | — | none |
-| `B.degrade` | 建筑退化 | 7 | — | none |
-| `B.secretlab` | 秘密实验室 | 2 | — | none |
-| `B.fake` | 假建筑 | 1 | — | none |
-| `B.tunnel` | [TunnelTypes] 隧道网络 | 2 | — | none |
-| `B.ai` | AI 基地建造计数与内圈 | 6 | — | partial |
-| `A.anim` | 动画：自定义调色板、伤害延迟、步兵归属、粒子范围、武器 | 6 | — | partial |
-| `R.tiberium` | 矿石伤害/治疗/爆炸 | 14 | — | none |
-| `R.particles` | 粒子类型/粒子系统扩展 | 1 | — | none |
-| `R.ai` | AI 与玩家自动反击、团队报复 | 4 | — | none |
-| `R.misc` | 全局杂项：随机箱钱数、显示延迟、盘状激光动画 | 4 | — | none |
-| `H.start` | 多人开局单位与基地车 | 3 | — | none |
+| [`T.cloak`](mechanisms/T.cloak.md) | 隐身阶段、条件隐身、隐身/显形音效 | 10 | — | partial |
+| [`T.spotlight`](mechanisms/T.spotlight.md) | 探照灯 | 8 | — | partial |
+| [`T.promotion`](mechanisms/T.promotion.md) | 晋升经验、晋升类型、闪光、能力、徽章 | 27 | — | partial |
+| [`T.buildtime`](mechanisms/T.buildtime.md) | 建造时间与低电惩罚 | 7 | — | none |
+| [`T.passengers`](mechanisms/T.passengers.md) | 乘客容量、允许/禁止列表、初始载荷 | 7 | — | none |
+| [`T.carryall`](mechanisms/T.carryall.md) | Carryall 吊运限制 | 2 | — | none |
+| [`T.crush`](mechanisms/T.crush.md) | 碾压伤害与全能碾压 | 4 | — | none |
+| [`T.harvester`](mechanisms/T.harvester.md) | 采矿车扫描与精炼厂存储 | 7 | — | none |
+| [`T.tibunit`](mechanisms/T.tibunit.md) | 单位与矿石：免疫、残留、溢出、转化 | 4 | — | none |
+| [`T.selfheal`](mechanisms/T.selfheal.md) | 自愈 | 4 | — | none |
+| [`T.damagefx`](mechanisms/T.damagefx.md) | 受损烟雾/火花粒子 | 6 | — | none |
+| [`T.fall`](mechanisms/T.fall.md) | 降落伞、下落速度、坠毁 | 9 | — | partial |
+| [`T.missile`](mechanisms/T.missile.md) | 自定义导弹单位 | 9 | — | none |
+| [`T.dig`](mechanisms/T.dig.md) | 地下单位钻入钻出 | 5 | — | none |
+| [`T.jammer`](mechanisms/T.jammer.md) | 雷达干扰、抑制/指示范围、传感器警告 | 4 | S.core | none |
+| [`T.gap`](mechanisms/T.gap.md) | 裂缝产生器半径 | 2 | — | none |
+| [`T.drain`](mechanisms/T.drain.md) | 能量/资金抽取（Drain） | 2 | — | none |
+| [`T.cloning`](mechanisms/T.cloning.md) | 克隆设施 | 4 | — | none |
+| [`T.reverse`](mechanisms/T.reverse.md) | 逆向工程与可逆转 | 4 | — | none |
+| [`T.ui`](mechanisms/T.ui.md) | 敌方显示名、范围指示圈、透明度、扳手图标 | 5 | — | none |
+| [`T.misc`](mechanisms/T.misc.md) | 单位杂项：炮塔速度、Gattling、部署朝向、空速、Assaulter 等 | 15 | — | none |
+| [`T.dehardcode`](mechanisms/T.dehardcode.md) | 去硬编码身份（IsCow/IsDesolator/IsBomb） | 4 | — | none |
+| [`B.rubble`](mechanisms/B.rubble.md) | 建筑废墟 | 10 | — | none |
+| [`B.academy`](mechanisms/B.academy.md) | Academy 老兵加成与 VeteranBuildings | 7 | T.promotion | none |
+| [`B.gates`](mechanisms/B.gates.md) | 门音效与可通行建筑 | 3 | — | none |
+| [`B.foundation`](mechanisms/B.foundation.md) | 自定义地基与实体高度 | 7 | — | partial |
+| [`B.misc`](mechanisms/B.misc.md) | 建筑杂项：建造/出售时间、停靠、可回收、消息、钱数显示 | 11 | — | none |
+| [`B.engineer`](mechanisms/B.engineer.md) | 工程师：多工程师、伤害、修理、占领科技 | 6 | — | none |
+| [`B.togglepower`](mechanisms/B.togglepower.md) | 手动开关电 | 3 | — | none |
+| [`B.degrade`](mechanisms/B.degrade.md) | 建筑退化 | 7 | — | none |
+| [`B.secretlab`](mechanisms/B.secretlab.md) | 秘密实验室 | 2 | — | none |
+| [`B.fake`](mechanisms/B.fake.md) | 假建筑 | 1 | — | none |
+| [`B.tunnel`](mechanisms/B.tunnel.md) | [TunnelTypes] 隧道网络 | 2 | — | none |
+| [`B.ai`](mechanisms/B.ai.md) | AI 基地建造计数与内圈 | 6 | — | partial |
+| [`A.anim`](mechanisms/A.anim.md) | 动画：自定义调色板、伤害延迟、步兵归属、粒子范围、武器 | 6 | — | partial |
+| [`R.tiberium`](mechanisms/R.tiberium.md) | 矿石伤害/治疗/爆炸 | 14 | — | none |
+| [`R.particles`](mechanisms/R.particles.md) | 粒子类型/粒子系统扩展 | 1 | — | none |
+| [`R.ai`](mechanisms/R.ai.md) | AI 与玩家自动反击、团队报复 | 4 | — | none |
+| [`R.misc`](mechanisms/R.misc.md) | 全局杂项：随机箱钱数、显示延迟、盘状激光动画 | 4 | — | none |
+| [`H.start`](mechanisms/H.start.md) | 多人开局单位与基地车 | 3 | — | none |
+<!-- /table:M3 -->
 
 ### M4 热点流程及其上的机制
 
@@ -220,61 +231,70 @@ Ares 侧数据的已知缺口（来自 Ares 3.0 还原工作区，下称 `ares-s
 4. `BuildingClass::ChangeOwner`（00448260）、`OnConstructionComplete`（00445F80）、`Update`（0043FB20）、
    `Unlimbo`（00440580）、`DestructionEffects`（004415F0）、`ExitObject`（00443C60）
 
+<!-- table:M4 -->
 | 机制 | 名称 | 键 | 依赖 | 现状 |
 |---|---|---|---|---|
-| `B.spy` | 间谍渗透效果 | 20 | B.engineer | none |
-| `B.prism` | Prism 转发 | 13 | — | none |
-| `B.occupy` | 驻军（UC）与掠夺 | 5 | — | none |
-| `B.trench` | 战壕 | 2 | B.occupy | none |
-| `B.firestorm` | 火风暴墙 | 7 | — | none |
-| `W.beams` | 波束、激光、电弧、磁轨炮 | 21 | — | partial |
-| `W.ivanbomb` | 疯狂伊文炸弹 | 14 | — | none |
-| `W.abductor` | Abductor 绑架 | 6 | — | none |
-| `W.weaponmisc` | 武器杂项：ApplyDamage、射程 | 2 | — | none |
-| `W.damage` | 相对伤害、Culling、部署状态伤害 | 9 | W.filter | none |
-| `W.effects` | 弹头效果：离子炮、涟漪、闪光、声呐、禁武、预冲击动画、桥 | 17 | — | none |
-| `W.death` | 死亡表现与死亡武器抑制 | 8 | — | none |
-| `W.mctemporal` | 心控永久与超时空 | 3 | — | none |
-| `P.projectile` | 抛射体：空爆、分裂、重定向、散布、受建筑/战壕阻挡 | 11 | — | none |
+| [`B.spy`](mechanisms/B.spy.md) | 间谍渗透效果 | 20 | B.engineer | none |
+| [`B.prism`](mechanisms/B.prism.md) | Prism 转发 | 13 | — | none |
+| [`B.occupy`](mechanisms/B.occupy.md) | 驻军（UC）与掠夺 | 5 | — | none |
+| [`B.trench`](mechanisms/B.trench.md) | 战壕 | 2 | B.occupy | none |
+| [`B.firestorm`](mechanisms/B.firestorm.md) | 火风暴墙 | 7 | — | none |
+| [`W.beams`](mechanisms/W.beams.md) | 波束、激光、电弧、磁轨炮 | 21 | — | partial |
+| [`W.ivanbomb`](mechanisms/W.ivanbomb.md) | 疯狂伊文炸弹 | 14 | — | none |
+| [`W.abductor`](mechanisms/W.abductor.md) | Abductor 绑架 | 6 | — | none |
+| [`W.weaponmisc`](mechanisms/W.weaponmisc.md) | 武器杂项：ApplyDamage、射程 | 2 | — | none |
+| [`W.damage`](mechanisms/W.damage.md) | 相对伤害、Culling、部署状态伤害 | 9 | W.filter | none |
+| [`W.effects`](mechanisms/W.effects.md) | 弹头效果：离子炮、涟漪、闪光、声呐、禁武、预冲击动画、桥 | 17 | — | none |
+| [`W.death`](mechanisms/W.death.md) | 死亡表现与死亡武器抑制 | 8 | — | none |
+| [`W.mctemporal`](mechanisms/W.mctemporal.md) | 心控永久与超时空 | 3 | — | none |
+| [`P.projectile`](mechanisms/P.projectile.md) | 抛射体：空爆、分裂、重定向、散布、受建筑/战壕阻挡 | 11 | — | none |
+<!-- /table:M4 -->
 
 ### M5 超武子类型
 
 每种 `Type=` 一个里程碑，均依赖 `S.core`。
 
+<!-- table:M5 -->
 | 机制 | 名称 | 键 | 依赖 | 现状 |
 |---|---|---|---|---|
-| `S.chrono` | ChronoSphere/ChronoWarp | 9 | S.core | none |
-| `S.dominator` | Dominator 心控超武 | 12 | S.core,W.mctemporal | none |
-| `S.droppod` | DropPod | 8 | S.core | none |
-| `S.mutator` | GeneticMutator | 4 | S.core | none |
-| `S.lightning` | LightningStorm | 18 | S.core | none |
-| `S.nuke` | Nuke | 4 | S.core | none |
-| `S.protect` | Protect（铁幕/力场） | 3 | S.core,T.ic | none |
-| `S.spyplane` | SpyPlane | 3 | S.core | none |
-| `S.sonar` | SonarPulse | 1 | S.core | none |
-| `S.paradrop` | ParaDrop 超武 | 0 | S.core,H.paradrop | partial |
-| `S.firewall` | Firewall 超武 | 0 | S.core,B.firestorm | none |
+| [`S.chrono`](mechanisms/S.chrono.md) | ChronoSphere/ChronoWarp | 10 | S.core | none |
+| [`S.dominator`](mechanisms/S.dominator.md) | Dominator 心控超武 | 12 | S.core,W.mctemporal | none |
+| [`S.droppod`](mechanisms/S.droppod.md) | DropPod | 8 | S.core | none |
+| [`S.mutator`](mechanisms/S.mutator.md) | GeneticMutator | 4 | S.core | none |
+| [`S.lightning`](mechanisms/S.lightning.md) | LightningStorm | 18 | S.core | none |
+| [`S.nuke`](mechanisms/S.nuke.md) | Nuke | 4 | S.core | none |
+| [`S.protect`](mechanisms/S.protect.md) | Protect（铁幕/力场） | 3 | S.core,T.ic | none |
+| [`S.spyplane`](mechanisms/S.spyplane.md) | SpyPlane | 3 | S.core | none |
+| [`S.sonar`](mechanisms/S.sonar.md) | SonarPulse | 1 | S.core | none |
+| [`S.paradrop`](mechanisms/S.paradrop.md) | ParaDrop 超武 | 4 | S.core,H.paradrop | partial |
+| [`S.firewall`](mechanisms/S.firewall.md) | Firewall 超武 | 0 | S.core,B.firestorm | none |
+| [`S.battery`](mechanisms/S.battery.md) | Battery 超武（3.0 新增，供电/保持在线） | 3 | S.core | none |
+<!-- /table:M5 -->
 
-注：超武子类型还复用了原版键和 `S.core` 的键，所以表中键数偏少。`S.paradrop` 和 `S.firewall`
-没有自己的新键，行为来自 `H.paradrop`、`B.firestorm` 和 `S.core`。
+注：超武子类型还复用了原版键和 `S.core` 的键，所以表中键数偏少。`S.firewall` 没有自己的新键，
+行为来自 `B.firestorm` 和 `S.core`；`S.battery` 是 3.0 新增的类型（`Battery.*`）。
 
 ### M6 状态交叉的机制
 
 需要先在第 8 节约定共享状态的写入方，再实现。
 
+<!-- table:M6 -->
 | 机制 | 名称 | 键 | 依赖 | 现状 |
 |---|---|---|---|---|
-| `T.ic` | 铁幕/力场/超时空修正与免疫 | 9 | — | none |
-| `T.berserk` | 狂暴与绑架免疫 | 4 | — | none |
-| `T.poweredby` | PoweredBy 供电单位 | 2 | T.emp | partial |
+| [`T.ic`](mechanisms/T.ic.md) | 铁幕/力场/超时空修正与免疫 | 9 | — | none |
+| [`T.berserk`](mechanisms/T.berserk.md) | 狂暴与绑架免疫 | 4 | — | none |
+| [`T.poweredby`](mechanisms/T.poweredby.md) | PoweredBy 供电单位 | 2 | T.emp | partial |
+<!-- /table:M6 -->
 
 ### M7 目录外部分（逐项决定是否做）
 
+<!-- table:M7 -->
 | 机制 | 名称 | 键 | 依赖 | 现状 |
 |---|---|---|---|---|
-| `U.shell` | 主菜单/战役/影片列表/RMG/遭遇战设置 | 44 | — | none |
-| `U.triggers` | 新触发动作/事件（TAction/TEvent） | 0 | — | none |
-| `U.bugfixes` | 无条件 Bugfix 钩子（无键） | 0 | — | none |
+| [`U.shell`](mechanisms/U.shell.md) | 主菜单/战役/影片列表/RMG/遭遇战设置 | 26 | — | none |
+| [`U.triggers`](mechanisms/U.triggers.md) | 新触发动作/事件（TAction/TEvent） | 0 | — | none |
+| [`U.bugfixes`](mechanisms/U.bugfixes.md) | 无条件 Bugfix 钩子（无键） | 0 | — | none |
+<!-- /table:M7 -->
 
 - `U.bugfixes`：`ares-src` 中 `src/Misc/Bugfixes*.cpp` 的钩子。逐个判断：是修正崩溃或明显错误（可考虑做），
   还是改变 retail 玩法（需要维护者决定）。
@@ -292,20 +312,25 @@ Ares 侧数据的已知缺口（来自 Ares 3.0 还原工作区，下称 `ares-s
 
 ### 读代码的优先级
 
-同一段行为，几份来源不一致时，按下面顺序取信：
+ares-src 必须是 `recover/inj-layout` 或更新的版本（见文首）。
 
-1. **gamemd 原版上下文**（`reference/gamemd_hooks/<函数地址>.c`，钩子处标 `// >>> HOOK`）：决定钩子在原版流程中的时机，
-   以及跳转地址的含义（返回的地址落在原版哪个分支）。
-2. **Ares 3.0 反编译**（`decompiled/functions/<地址>.c`）：3.0 实际做了什么。这是行为的依据。
-3. **还原源码**：`src/Recovered/`（3.0 钩子的 C++ 翻译，未编译）、`src/Ext/*`（0.A 源码，已合并 3.0 的成员、默认值和读取）。
-   源码可读性好，但只能当阅读辅助，必须和第 2 项核对。
+1. **还原源码**（`src/`）：主要阅读对象。函数体已按 3.0 翻译或对照 3.0 核对，改动处注有 `// 3.0 (Ares.dll 地址)`；
+   核对结果记录在 `symbols/verified_30.tsv`，索引页"3.0 核对"列据此标 ✓。
+2. **gamemd 原版上下文**（`reference/gamemd_hooks/<函数地址>.c`，钩子处标 `// >>> HOOK`）：钩子在原版流程中的时机，
+   以及跳转地址的含义（返回的地址落在原版哪个分支）。源码只给出跳转地址，含义要看这里。
+3. **Ares 3.0 反编译**（`decompiled/functions/<地址>.c`）：源码有疑问、索引页"3.0 核对"列不是 ✓，
+   或 `report/body_check*.tsv` 列出该函数时，以反编译为准。
 
-还原源码和注释数据库都可能有错。任何一处与反编译不一致，以反编译为准，并把差异写进索引页的备注区。
+源码和注释数据库仍可能有错。发现与反编译不一致时，以反编译为准，把差异写进索引页备注区，并告知 ares-src 的维护者。
 
 ### 已知的坑
 
-- **状态为 `kept` 的钩子只有 0.A 源码，3.0 可能改过。** 索引页标了 `⚠改过` 的一定改过，没标的也可能改过。
-  样板 `B.rubble` 里，0.A 的工程师钩子在放置失败时会恢复原建筑；3.0 删掉了这段，改为销毁旧建筑，并且不消耗工程师。
+- **不要用 ares-src 的 `main` 分支。** 那里的保留钩子仍是 0.A 写法。例如 `B.rubble` 的工程师钩子：0.A 在放置失败时
+  恢复原建筑；3.0 改为销毁旧建筑，并且不消耗工程师。`recover/inj-layout` 中已是 3.0 写法。
+- **搜源码用 `rg` 或 `grep -a`。** `src/Ext/BuildingType/Body.cpp` 是 Latin-1 编码，macOS 自带的 `grep` 在 UTF-8 环境下
+  搜不到其中的内容，也不报错（例如 `BuildingTypeExt::SwitchRubble` 的定义就在这里）。
+- **还原源码可以编译，但从未在游戏中运行过**（需要 Syringe）。`report/body_check*.tsv` 列出了与 Ares.dll 静态比对仍不一致的
+  函数（多为工具链差异），涉及时看反编译。
 - **反编译中的虚函数调用**写作 `(**(code **)(*p + 0xd4))()`：用 `ares-src/reference/gamemd_vtables.tsv` 按类和偏移查函数名
   （例如 BuildingClass +0xD4 为 `Limbo`，+0xF8 为 `UnInit`，+0x100 为 `ExitObject_Main`）。
 - **字段偏移**：Ares 扩展字段用 `symbols/extdata_fields.tsv` 查；gamemd 字段用 `reference/gamemd_structs.tsv` 查。
@@ -326,20 +351,23 @@ Ares 侧数据的已知缺口（来自 Ares 3.0 还原工作区，下称 `ares-s
    和原生函数名搜索。找不到负责者时，先确认原版功能本身是否已经移植。
 5. **把结论写进备注区**：3.0 与 0.A 的差异、确认过的时机和分支、未决问题。只写结论和地址，不贴反编译代码。
    比较复杂的机制，可以另写 `docs/ares-<机制>.md` 给玩家和模组作者看，格式参照现有的 Ares 文档。
-6. **实现。** 按下面的 PR 拆分。Rust 代码按 VERA20K 自己的结构写，在旁边注明原生地址（gamemd 地址和 Ares 3.0 地址），
+6. **实现。** 按下面的提交顺序。Rust 代码按 VERA20K 自己的结构写，在旁边注明原生地址（gamemd 地址和 Ares 3.0 地址），
    不逐行转写 C++。
 7. **验收。** 按第 9 节验收，然后更新 `catalog.tsv` 的 `vera_status`、`docs/ares.md` 的支持列表和致谢。
 
-### PR 拆分
+### 一个 PR 内的提交顺序
 
-| PR | 内容 | 行为变化 |
+一条链一个 PR（第 3 节第 5 条）。PR 内按下面顺序提交，方便审查和定位问题：
+
+| 提交 | 内容 | 行为变化 |
 |---|---|---|
 | 读取 | 读取器、规则数据、按层合并 | 无（只读不用） |
 | 扩展点（如需要） | 热点函数纯重构 | 无 |
-| 使用点 ×N | 每个使用点或一组紧密相关的使用点一个 PR | 仅在 `ares` 构建、配置了键时 |
+| 使用点 | 本条链上的使用点 | 仅在 `ares` 构建、配置了键时 |
 | 收尾 | 文档、目录状态、残差 | 无 |
 
-每个 PR 按项目要求写：改了什么、为什么（原生地址）、怎么测的，约 15 行。
+开 PR 前由一个只读的审查代理过一遍（项目契约要求，规则见 `.agents/skills/_shared/review.md`）。
+PR 描述按项目要求写：改了什么、为什么（原生地址）、怎么测的，约 15 行。
 
 ### 规格模板（可选）
 
@@ -374,7 +402,7 @@ VERA20K 负责者：读取在 …，使用在 …
 3. **一个钩子服务多个机制时，**把它拆成每个机制一个调用，按原钩子内部的顺序依次执行。
 4. **与 Phobos/NPatch 的交叉。** 同一原生位置被多个扩展改动时，按原生优先级选定胜出方，另一方保留自己的负责者。
    做法参照 `npatch.md` 中的辐射例子。
-5. **扩展点 PR 不带行为。** 测试前后完全一致，便于回退和审查。
+5. **扩展点提交不带行为。** 测试前后完全一致，便于审查。
 
 ## 8. 共享状态约定
 
@@ -392,7 +420,9 @@ VERA20K 负责者：读取在 …，使用在 …
 
 ## 9. 测试与验收
 
-- **三种构建都通过**：默认、`ares`、`ares,phobos,npatch`（`tools/capability_tests`）。
+- **三种构建都通过**：默认、`ares`、`ares,phobos,npatch`（`tools/capability_tests.py`）。
+- **测试命令**：经 `python -m tools.cargo_run -- test -p <crate> --lib <模块路径>::` 跑受影响模块的测试，
+  用 retail `ini/` 并设 `VERA20K_REQUIRE_RETAIL_INI=1`（见项目契约 Git and validation 一节）。
 - **回归测试**：每个改动一到三个，通过生产读取器读 INI。必须覆盖：
   - 键未设置（等于当前行为）；
   - 设为 `none`（适用的键）；
@@ -423,8 +453,9 @@ VERA20K 负责者：读取在 …，使用在 …
 | 项 | 影响 | 处理 |
 |---|---|---|
 | 推断出的使用点有误 | 规格错误 | 第 6 节第 1 步逐个核实 |
-| 264 个键只有 0.A 使用点 | 可能漏掉 3.0 的改动 | 对照 `decompiled/` |
-| 194 + 210 个键没有已知使用点 | 工作量被低估 | 在所属机制开工前查清 |
+| 用错 ares-src 版本 | 照 0.A 写法实现 | 文首注明的分支与提交；索引页"3.0 核对"列 |
+| 112 + 122 个键没有已知使用点 | 工作量被低估 | 在所属机制开工前查清 |
+| 还原源码未在游戏中运行 | 源码与 3.0 仍可能有差别 | 有疑问时看反编译；必要时与安装了 Ares 的游戏并排对照 |
 | 机制划分按键名前缀，有错配 | 里程碑边界不准 | M0 校正；开工时以使用函数为准 |
 | Phobos 同名键 | 两个扩展争用同一负责者 | 按跨扩展规则，先定胜出方 |
 | 还原源码的使用条款 | 发布风险 | 只参考行为，不复制代码；引用方式由维护者决定 |

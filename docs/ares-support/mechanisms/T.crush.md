@@ -15,23 +15,16 @@
 
 | 键 | 类 | 类型 | 默认 | 读取位置 | 使用点状态 | VERA20K 字面量 |
 |---|---|---|---|---|---|---|
-| `ChronoInfantryCrush` | Rules | Valueable<bool> | true | src/Ext/Rules/Body.cpp:224 | ok | — |
-| `CrushDamage.%s` | TechnoType | Promotable<int> | 0 | src/Ext/TechnoType/Body.cpp:464 | no_use_found | — |
-| `CrushDamage.Warhead` | TechnoType | Nullable<WarheadTypeClass*> | (empty) | src/Ext/TechnoType/Body.cpp:465 | check_0A_use | — |
-| `OmniCrusher.Aggressive` | TechnoType | Valueable<bool> | true | src/Ext/TechnoType/Body.cpp:463 | no_use_found | — |
+| `ChronoInfantryCrush` | Rules | Valueable<bool> | true | src/Ext/Rules/Body.cpp:179 | ok | — |
+| `CrushDamage.%s` | TechnoType | Promotable<int> | 0 | src/Ext/TechnoType/Body.cpp:468 | ok | — |
+| `CrushDamage.Warhead` | TechnoType | Nullable<WarheadTypeClass*> | (empty) | src/Ext/TechnoType/Body.cpp:469 | ok | — |
+| `OmniCrusher.Aggressive` | TechnoType | Valueable<bool> | true | src/Ext/TechnoType/Body.cpp:467 | ok | — |
 
 ## 钩子（2）
 
-先读 3.0 反编译（`decompiled`），再读还原源码（`src`）；状态为 `kept` 的是 0.A 源码，函数体可能已被 3.0 修改。
+"源码"列的函数体已按 3.0 翻译或对照 3.0 核对（"3.0 核对"列为 ✓）；有疑问时以 3.0 反编译为准。`⚠改过` 表示 3.0 相对 0.A 改过这个钩子，源码中已是 3.0 写法。
 
-| gamemd 地址 | 钩子 | 状态 | 所在 gamemd 函数（上下文） | 3.0 反编译 | 源码 | VERA20K 已引用该函数 |
-|---|---|---|---|---|---|---|
-| 718275 | `TeleportLocomotionClass_MakeRoom` | new_in_3.0 | 00718260 `TeleportLocomotionClass::TeleportLocomotionClass__Update_Position` | decompiled/functions/1004B980.c | src/Recovered/TeleportLocomotionClass.cpp:30 | src/sim/movement/teleport_chrono.rs |
-| 7418AA | `UnitClass_CrushCell_CrushDamage` | kept | 007416A0 `UnitClass::UnitClass__Crush_Or_Prescatter_Cell` | decompiled/functions/1004BCE0.c | src/Ext/Techno/Hooks.cpp:1548 | src/architecture_guards.rs, src/sim/combat/object_health.rs, src/sim/combat/techno_death.rs … |
-
-## 非钩子函数
-
-| Ares 地址 | 函数 | 来源 | 3.0 反编译 |
-|---|---|---|---|
-| 1002AB60 | RulesExt::ExtData::LoadBeforeTypeData [loader] | 使用键 | decompiled/functions/1002AB60.c |
-| 1002B510 | `WeaponTypeClass::FindOrAllocate` | 被钩子调用 | decompiled/functions/1002B510.c |
+| gamemd 地址 | 钩子 | 状态 | 3.0 核对 | 所在 gamemd 函数（上下文） | 3.0 反编译 | 源码 | VERA20K 已引用该函数 |
+|---|---|---|---|---|---|---|---|
+| 718275 | `TeleportLocomotionClass_MakeRoom` | new_in_3.0 | ✓ | 00718260 `TeleportLocomotionClass::TeleportLocomotionClass__Update_Position` | decompiled/functions/1004B980.c | src/Ext/Techno/Hooks.cpp:2664 | src/sim/movement/teleport_chrono.rs |
+| 7418AA | `UnitClass_CrushCell_CrushDamage` | kept | ✓ | 007416A0 `UnitClass::UnitClass__Crush_Or_Prescatter_Cell` | decompiled/functions/1004BCE0.c | src/Ext/Techno/Hooks.cpp:2200 | src/architecture_guards.rs, src/sim/combat/object_health.rs, src/sim/combat/techno_death.rs … |

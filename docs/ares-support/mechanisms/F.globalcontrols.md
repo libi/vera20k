@@ -11,17 +11,16 @@
 （尚无人工备注。实现时把 3.0 与 0.A 的差异、确认过的行为和未决问题记在这里。）
 <!-- /notes -->
 
-## 配置键（5）
+## 配置键（4）
 
 | 键 | 类 | 类型 | 默认 | 读取位置 | 使用点状态 | VERA20K 字面量 |
 |---|---|---|---|---|---|---|
-| `GlobalControls` | Ares.GlobalControls | — | — | src/Ares.GlobalControls.cpp:20 | unscanned | src/rules/native_processing.rs, src/rules/phobos_parallel_ai_queues.rs, src/rules/phobos_sw_sidebar.rs |
-| `Graphics.Advanced` | Ares.GlobalControls | — | — | src/Ares.GlobalControls.cpp:40 | unscanned | — |
-| `AllowBypassBuildLimit` | Rules | — | — | src/Ext/Rules/Body.cpp:147 | unscanned | src/rules/native_processing.rs |
-| `AllowParallelAIQueues` | Rules | — | — | src/Ext/Rules/Body.cpp:145 | unscanned | src/rules/phobos_parallel_ai_queues.rs |
-| `DebugKeysEnabled` | Rules | — | — | src/Ext/Rules/Body.cpp:159 | unscanned | — |
+| `Graphics.Advanced` | Ares.GlobalControls | — | — | src/Ares.GlobalControls.cpp:26 | unscanned | — |
+| `AllowBypassBuildLimit` | Rules | — | — | src/Ext/Rules/Body.cpp:102 | unscanned | src/rules/native_processing.rs |
+| `AllowParallelAIQueues` | Rules | — | — | src/Ext/Rules/Body.cpp:100 | unscanned | src/rules/phobos_parallel_ai_queues.rs |
+| `DebugKeysEnabled` | Rules | — | — | src/Ext/Rules/Body.cpp:114 | unscanned | — |
 
 ## 钩子（0）
 
-先读 3.0 反编译（`decompiled`），再读还原源码（`src`）；状态为 `kept` 的是 0.A 源码，函数体可能已被 3.0 修改。
+"源码"列的函数体已按 3.0 翻译或对照 3.0 核对（"3.0 核对"列为 ✓）；有疑问时以 3.0 反编译为准。`⚠改过` 表示 3.0 相对 0.A 改过这个钩子，源码中已是 3.0 写法。
 

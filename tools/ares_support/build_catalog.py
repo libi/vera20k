@@ -63,6 +63,27 @@ def decl_default(cls, member):
     return typ, dflt
 
 
+_all_src = None
+def find_read(key, first):
+    """file:line of the first line quoting the key: the class body first, then all of src/."""
+    global _all_src
+    needle = '"%s"' % key
+    for i, l in enumerate(lines(first), 1):
+        if needle in l:
+            return '%s:%d' % (first, i)
+    if _all_src is None:
+        _all_src = []
+        for root, _, files in os.walk(os.path.join(ares, 'src')):
+            for fn in sorted(files):
+                if fn.endswith(('.cpp', '.h')):
+                    _all_src.append(os.path.relpath(os.path.join(root, fn), ares))
+    for p in _all_src:
+        for i, l in enumerate(lines(p), 1):
+            if needle in l:
+                return '%s:%d' % (p, i)
+    return ''
+
+
 def mechanism(cls, key):
     for mid, ext, pat in RULES:
         if ext and not re.search(ext, cls):
@@ -73,23 +94,43 @@ def mechanism(cls, key):
 
 
 # 1. ExtData keys
-cov = {(r['ext'], r['ini_key']): r['gap'] for r in tsv('report/ini_coverage.tsv')}
+# A use counts as 3.0 source when its function was translated from 3.0 or checked against
+# it (symbols/verified_30.tsv). report/ini_coverage.tsv predates the last verification
+# rounds, so its check_0A_use label is recomputed here.
+verified = {r['address'].upper() for r in tsv('symbols/verified_30.tsv')}
+THREE = {'hook_3.0', 'translated', 'loader'}
 uses = defaultdict(list)
+use_ok = defaultdict(list)
 for r in tsv('report/ini_uses.tsv'):
-    uses[(r['ext'], r['ini_key'])].append('%s %s [%s%s]' % (
-        r['function'], r['function_name'], r['source'], ',inferred' if r['via'] == 'fingerprint' else ''))
-
-rows, seen = [], set()
-for r in tsv('symbols/extdata_fields.tsv'):
-    if r['ext'] == 'ext':
+    if r['source'] == 'loader':
         continue
+    ok = r['source'] in THREE or r['function'].upper() in verified
+    uses[(r['ext'], r['ini_key'])].append('%s %s [%s%s%s]' % (
+        r['function'], r['function_name'], r['source'], ',inferred' if r['via'] == 'fingerprint' else '',
+        ',3.0✓' if ok and r['source'] not in THREE else ''))
+    use_ok[(r['ext'], r['ini_key'])].append(ok and r['source'] != 'missing')
+
+def use_status(k):
+    oks = use_ok.get(k)
+    if not oks:
+        return 'no_use_found'
+    return 'ok' if all(oks) else 'needs_check'
+
+rows, seen, seen_pair = [], set(), set()
+fields = tsv('symbols/extdata_fields.tsv')
+if os.path.exists(os.path.join(ares, 'symbols/extdata_fields_sw.tsv')):
+    fields += tsv('symbols/extdata_fields_sw.tsv')
+for r in fields:
+    if r['ext'] == 'ext' or (r['ext'], r['ini_key'].lower()) in seen_pair:
+        continue
+    seen_pair.add((r['ext'], r['ini_key'].lower()))
     cls = EXT_DIR.get(r['ext'], r['ext'])
     typ, dflt = decl_default(cls, r['member'])
     _, cpp = body_paths(cls)
-    at = next(('%s:%d' % (cpp, i) for i, l in enumerate(lines(cpp), 1) if '"%s"' % r['ini_key'] in l), '')
+    at = find_read(r['ini_key'], cpp)
     rows.append(dict(key=r['ini_key'], cls=cls, section=SECTION.get(cls, ''), origin='ExtData',
                      type=typ or r['reader'], default=dflt, loader=r['loader'], read_at=at,
-                     since=r['status'], use_status=cov.get((r['ext'], r['ini_key']), ''),
+                     since=r['status'], use_status=use_status((r['ext'], r['ini_key'])),
                      uses='; '.join(uses.get((r['ext'], r['ini_key']), []))))
     seen.add(r['ini_key'].lower())
 

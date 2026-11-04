@@ -49,6 +49,10 @@ for h in hooks30:
 hook_info = {r['name']: r for r in ares_tsv('report/hooks.tsv')}
 ctx = {r['hook']: r for r in ares_tsv('reference/gamemd_hooks/index.tsv')}
 changed = {r['name'] for r in ares_tsv('report/changed_kept.tsv')}
+verified = {r['address'].upper() for r in ares_tsv('symbols/verified_30.tsv')}
+# Uses that only copy, construct or (de)serialise a field say nothing about behaviour.
+INFRA = re.compile(r'Serialize|::ExtData::ExtData|~ExtData|LoadFromStream|SaveToStream|Swizzle|InheritSettings'
+                   r'|LoadFromINI|::Initialize\b|CompleteInitialization|PrepareStream')
 
 
 def mech_of_file(path):
@@ -129,7 +133,8 @@ for mid, ms, name, dep, hint, doc in MECHANISMS:
     for k in keys:
         for u in filter(None, (x.strip() for x in k['uses'].split(';'))):
             addr, rest = u.split(' ', 1)
-            use_funcs.setdefault(addr.upper(), rest)
+            if not INFRA.search(rest):
+                use_funcs.setdefault(addr.upper(), rest)
     # hooks: those whose Ares body is a use function, plus hooks in files mapped to this mechanism
     hooks = {}
     for addr in use_funcs:
@@ -143,6 +148,8 @@ for mid, ms, name, dep, hint, doc in MECHANISMS:
     helpers = []
     for a in sorted(hook_ares | set(use_funcs)):
         for n in callees(a):
+            if INFRA.search(n) or re.match(r'(Ares(ByteStream|Swizzle|Stream)|CSFText)::', n):
+                continue
             for ha in addr_of[n]:
                 if ha not in hook_ares and ha not in use_funcs and (n, ha) not in helpers:
                     helpers.append((n, ha))
@@ -169,10 +176,11 @@ for mid, ms, name, dep, hint, doc in MECHANISMS:
     else:
         L.append('无键（基础设施或无条件行为）。')
     L += ['', '## 钩子（%d）' % len(hooks), '',
-          '先读 3.0 反编译（`decompiled`），再读还原源码（`src`）；状态为 `kept` 的是 0.A 源码，函数体可能已被 3.0 修改。', '']
+          '"源码"列的函数体已按 3.0 翻译或对照 3.0 核对（"3.0 核对"列为 ✓）；有疑问时以 3.0 反编译为准。'
+          '`⚠改过` 表示 3.0 相对 0.A 改过这个钩子，源码中已是 3.0 写法。', '']
     if hooks:
-        L += ['| gamemd 地址 | 钩子 | 状态 | 所在 gamemd 函数（上下文） | 3.0 反编译 | 源码 | VERA20K 已引用该函数 |',
-              '|---|---|---|---|---|---|---|']
+        L += ['| gamemd 地址 | 钩子 | 状态 | 3.0 核对 | 所在 gamemd 函数（上下文） | 3.0 反编译 | 源码 | VERA20K 已引用该函数 |',
+              '|---|---|---|---|---|---|---|---|']
         for h in sorted(hooks.values(), key=lambda x: int(x['gamemd'], 16)):
             info = hook_info.get(h['name'], {})
             c = ctx.get(h['name'])
@@ -181,8 +189,9 @@ for mid, ms, name, dep, hint, doc in MECHANISMS:
             status = info.get('status', '?') + (' ⚠改过' if h['name'] in changed else '')
             src = src_line(info['file'], h['name']) if info.get('file') else '—'
             cites = sorted(vera_cites.get(int(fn, 16), ())) if fn else []
-            L.append('| %s | `%s` | %s | %s `%s` | %s | %s | %s |' % (
-                h['gamemd'], h['name'], status, fn, c['gamemd_function'] if c else '?', dec_path(h['ares']) or '—',
+            ok = '✓' if (h['ares'].upper() in verified or info.get('status', '').startswith(('new', 'replaces'))) else '—'
+            L.append('| %s | `%s` | %s | %s | %s `%s` | %s | %s | %s |' % (
+                h['gamemd'], h['name'], status, ok, fn, c['gamemd_function'] if c else '?', dec_path(h['ares']) or '—',
                 src, ', '.join(cites[:3]) + (' …' if len(cites) > 3 else '') or '—'))
     others = [(a, n) for a, n in use_funcs.items() if a not in hook_ares]
     if others or helpers:
@@ -201,3 +210,20 @@ for mid, ms, name, dep, hint, doc in MECHANISMS:
     open(path, 'w', encoding='utf-8').write('\n'.join(L) + '\n')
 
 print('%d mechanism pages in %s' % (len(MECHANISMS), os.path.relpath(out, vera)))
+
+# README milestone tables between <!-- table:Mx --> markers
+readme = os.path.join(docs, 'README.md')
+text = open(readme, encoding='utf-8').read()
+for ms in sorted({m[1] for m in MECHANISMS}):
+    begin, end = '<!-- table:%s -->' % ms, '<!-- /table:%s -->' % ms
+    if begin not in text:
+        continue
+    rows = ['| 机制 | 名称 | 键 | 依赖 | 现状 |', '|---|---|---|---|---|']
+    for mid, m, name, dep, hint, _ in MECHANISMS:
+        if m == ms:
+            rows.append('| [`%s`](mechanisms/%s.md) | %s | %d | %s | %s |' % (
+                mid, mid, name, len(keys_by.get(mid, [])), dep or '—', hint))
+    head, rest = text.split(begin, 1)
+    _, tail = rest.split(end, 1)
+    text = head + begin + '\n' + '\n'.join(rows) + '\n' + end + tail
+open(readme, 'w', encoding='utf-8').write(text)

@@ -15,25 +15,18 @@
 
 | 键 | 类 | 类型 | 默认 | 读取位置 | 使用点状态 | VERA20K 字面量 |
 |---|---|---|---|---|---|---|
-| `Degrade.Amount` | BuildingType | Nullable<int> | (empty) | src/Ext/BuildingType/Body.cpp:309 | check_0A_use | — |
-| `Degrade.Percentage` | BuildingType | Nullable<double> | (empty) | src/Ext/BuildingType/Body.cpp:310 | check_0A_use | — |
-| `Degrades` | HouseType | Nullable<bool> | (empty) | src/Ext/HouseType/Body.cpp:326 | no_use_found | — |
-| `Degrade.AmountConsumer` | Rules | Valueable<int> | 1 | src/Ext/Rules/Body.cpp:207 | no_use_found | — |
-| `Degrade.AmountNormal` | Rules | Valueable<int> | 0 | src/Ext/Rules/Body.cpp:206 | no_use_found | — |
-| `Degrade.Enabled` | Rules | Valueable<bool> | false | src/Ext/Rules/Body.cpp:204 | check_0A_use | — |
-| `Degrade.Percentage` | Rules | Nullable<double> | (empty) | src/Ext/Rules/Body.cpp:205 | check_0A_use | — |
+| `Degrade.Amount` | BuildingType | Nullable<int> | (empty) | src/Ext/BuildingType/Body.cpp:305 | ok | — |
+| `Degrade.Percentage` | BuildingType | Nullable<double> | (empty) | src/Ext/BuildingType/Body.cpp:306 | ok | — |
+| `Degrades` | HouseType | Nullable<bool> | (empty) | src/Ext/HouseType/Body.cpp:329 | no_use_found | — |
+| `Degrade.AmountConsumer` | Rules | Valueable<int> | 1 | src/Ext/Rules/Body.cpp:162 | no_use_found | — |
+| `Degrade.AmountNormal` | Rules | Valueable<int> | 0 | src/Ext/Rules/Body.cpp:161 | no_use_found | — |
+| `Degrade.Enabled` | Rules | Valueable<bool> | false | src/Ext/Rules/Body.cpp:159 | ok | — |
+| `Degrade.Percentage` | Rules | Nullable<double> | (empty) | src/Ext/Rules/Body.cpp:160 | ok | — |
 
 ## 钩子（1）
 
-先读 3.0 反编译（`decompiled`），再读还原源码（`src`）；状态为 `kept` 的是 0.A 源码，函数体可能已被 3.0 修改。
+"源码"列的函数体已按 3.0 翻译或对照 3.0 核对（"3.0 核对"列为 ✓）；有疑问时以 3.0 反编译为准。`⚠改过` 表示 3.0 相对 0.A 改过这个钩子，源码中已是 3.0 写法。
 
-| gamemd 地址 | 钩子 | 状态 | 所在 gamemd 函数（上下文） | 3.0 反编译 | 源码 | VERA20K 已引用该函数 |
-|---|---|---|---|---|---|---|
-| 4F8B08 | `HouseClass_Update_DamageDelay` | kept ⚠改过 | 004F8440 `HouseClass::HouseClass__Update` | decompiled/functions/100247A0.c | src/Ext/House/Hooks.cpp:222 | src/app/match_runtime/scenario_exit.rs, src/app/presentation/sidebar_gadgets.rs, src/sim/house_eva.rs … |
-
-## 非钩子函数
-
-| Ares 地址 | 函数 | 来源 | 3.0 反编译 |
-|---|---|---|---|
-| 1002AB60 | RulesExt::ExtData::LoadBeforeTypeData [loader] | 使用键 | decompiled/functions/1002AB60.c |
-| 1002B510 | `WeaponTypeClass::FindOrAllocate` | 被钩子调用 | decompiled/functions/1002B510.c |
+| gamemd 地址 | 钩子 | 状态 | 3.0 核对 | 所在 gamemd 函数（上下文） | 3.0 反编译 | 源码 | VERA20K 已引用该函数 |
+|---|---|---|---|---|---|---|---|
+| 4F8B08 | `HouseClass_Update_DamageDelay` | kept ⚠改过 | ✓ | 004F8440 `HouseClass::HouseClass__Update` | decompiled/functions/100247A0.c | src/Ext/House/Hooks.cpp:241 | src/app/match_runtime/scenario_exit.rs, src/app/presentation/sidebar_gadgets.rs, src/sim/house_eva.rs … |

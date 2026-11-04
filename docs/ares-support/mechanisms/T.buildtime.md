@@ -15,21 +15,21 @@
 
 | 键 | 类 | 类型 | 默认 | 读取位置 | 使用点状态 | VERA20K 字面量 |
 |---|---|---|---|---|---|---|
-| `BuildTime.Cost` | TechnoType | Nullable<int> | (empty) | src/Ext/TechnoType/Body.cpp:539 | no_use_found | — |
-| `BuildTime.LowPowerPenalty` | TechnoType | Nullable<double> | (empty) | src/Ext/TechnoType/Body.cpp:540 | no_use_found | — |
-| `BuildTime.MaxLowPower` | TechnoType | Nullable<double> | (empty) | src/Ext/TechnoType/Body.cpp:542 | no_use_found | — |
-| `BuildTime.MinLowPower` | TechnoType | Nullable<double> | (empty) | src/Ext/TechnoType/Body.cpp:541 | no_use_found | — |
-| `BuildTime.MultipleFactory` | TechnoType | Nullable<double> | (empty) | src/Ext/TechnoType/Body.cpp:543 | ok | — |
-| `BuildTime.Speed` | TechnoType | Nullable<double> | (empty) | src/Ext/TechnoType/Body.cpp:538 | no_use_found | — |
-| `FactoryPlant.Multiplier` | TechnoType | Valueable<double> | 1.0 | src/Ext/TechnoType/Body.cpp:515 | no_use_found | — |
+| `BuildTime.Cost` | TechnoType | Nullable<int> | (empty) | src/Ext/TechnoType/Body.cpp:543 | ok | — |
+| `BuildTime.LowPowerPenalty` | TechnoType | Nullable<double> | (empty) | src/Ext/TechnoType/Body.cpp:544 | ok | — |
+| `BuildTime.MaxLowPower` | TechnoType | Nullable<double> | (empty) | src/Ext/TechnoType/Body.cpp:546 | ok | — |
+| `BuildTime.MinLowPower` | TechnoType | Nullable<double> | (empty) | src/Ext/TechnoType/Body.cpp:545 | ok | — |
+| `BuildTime.MultipleFactory` | TechnoType | Nullable<double> | (empty) | src/Ext/TechnoType/Body.cpp:547 | ok | — |
+| `BuildTime.Speed` | TechnoType | Nullable<double> | (empty) | src/Ext/TechnoType/Body.cpp:542 | ok | — |
+| `FactoryPlant.Multiplier` | TechnoType | Valueable<double> | 1.0 | src/Ext/TechnoType/Body.cpp:519 | ok | — |
 
 ## 钩子（1）
 
-先读 3.0 反编译（`decompiled`），再读还原源码（`src`）；状态为 `kept` 的是 0.A 源码，函数体可能已被 3.0 修改。
+"源码"列的函数体已按 3.0 翻译或对照 3.0 核对（"3.0 核对"列为 ✓）；有疑问时以 3.0 反编译为准。`⚠改过` 表示 3.0 相对 0.A 改过这个钩子，源码中已是 3.0 写法。
 
-| gamemd 地址 | 钩子 | 状态 | 所在 gamemd 函数（上下文） | 3.0 反编译 | 源码 | VERA20K 已引用该函数 |
-|---|---|---|---|---|---|---|
-| 6F47A0 | `TechnoClass_GetBuildTime` | new_in_3.0 | 006F47A0 `TechnoClass::TechnoClass__GetProductionTime` | decompiled/functions/10041AB0.c | src/Recovered/TechnoClass.cpp:170 | src/rules/ruleset.rs, src/sim/production/factory.rs |
+| gamemd 地址 | 钩子 | 状态 | 3.0 核对 | 所在 gamemd 函数（上下文） | 3.0 反编译 | 源码 | VERA20K 已引用该函数 |
+|---|---|---|---|---|---|---|---|
+| 6F47A0 | `TechnoClass_GetBuildTime` | new_in_3.0 | ✓ | 006F47A0 `TechnoClass::TechnoClass__GetProductionTime` | decompiled/functions/10041AB0.c | src/Ext/TechnoType/Hooks.cpp:322 | src/rules/ruleset.rs, src/sim/production/factory.rs |
 
 ## 非钩子函数
 

@@ -15,24 +15,28 @@
 
 | 键 | 类 | 类型 | 默认 | 读取位置 | 使用点状态 | VERA20K 字面量 |
 |---|---|---|---|---|---|---|
-| `CloningFacility` | BuildingType | Valueable<bool> | false | src/Ext/BuildingType/Body.cpp:284 | check_0A_use | — |
-| `Cloneable` | TechnoType | Valueable<bool> | true | src/Ext/TechnoType/Body.cpp:355 | check_0A_use | — |
-| `ClonedAs` | TechnoType | Valueable<TechnoTypeClass*> | nullptr | src/Ext/TechnoType/Body.cpp:358 | check_0A_use | — |
-| `ClonedAt` | TechnoType | ValueableVector<BuildingTypeClass *> | — | src/Ext/TechnoType/Body.cpp:357 | check_0A_use | — |
+| `CloningFacility` | BuildingType | Valueable<bool> | false | src/Ext/BuildingType/Body.cpp:280 | ok | — |
+| `Cloneable` | TechnoType | Valueable<bool> | true | src/Ext/TechnoType/Body.cpp:359 | ok | — |
+| `ClonedAs` | TechnoType | Valueable<TechnoTypeClass*> | nullptr | src/Ext/TechnoType/Body.cpp:362 | ok | — |
+| `ClonedAt` | TechnoType | ValueableVector<BuildingTypeClass *> | — | src/Ext/TechnoType/Body.cpp:361 | ok | — |
 
 ## 钩子（1）
 
-先读 3.0 反编译（`decompiled`），再读还原源码（`src`）；状态为 `kept` 的是 0.A 源码，函数体可能已被 3.0 修改。
+"源码"列的函数体已按 3.0 翻译或对照 3.0 核对（"3.0 核对"列为 ✓）；有疑问时以 3.0 反编译为准。`⚠改过` 表示 3.0 相对 0.A 改过这个钩子，源码中已是 3.0 写法。
 
-| gamemd 地址 | 钩子 | 状态 | 所在 gamemd 函数（上下文） | 3.0 反编译 | 源码 | VERA20K 已引用该函数 |
-|---|---|---|---|---|---|---|
-| 687C16 | `INIClass_ReadScenario_ValidateThings` | kept ⚠改过 | 00686B20 `CCINIClass::InitializeScenarioFromINI` | decompiled/functions/100677B0.c | src/Misc/Invalidators.cpp:65 | src/app/loading/fresh_scenario.rs, src/app/loading/init.rs, src/map/authored_overlay.rs … |
+| gamemd 地址 | 钩子 | 状态 | 3.0 核对 | 所在 gamemd 函数（上下文） | 3.0 反编译 | 源码 | VERA20K 已引用该函数 |
+|---|---|---|---|---|---|---|---|
+| 687C16 | `INIClass_ReadScenario_ValidateThings` | kept ⚠改过 | ✓ | 00686B20 `CCINIClass::InitializeScenarioFromINI` | decompiled/functions/100677B0.c | src/Misc/Invalidators.cpp:67 | src/app/loading/fresh_scenario.rs, src/app/loading/init.rs, src/map/authored_overlay.rs … |
 
 ## 非钩子函数
 
 | Ares 地址 | 函数 | 来源 | 3.0 反编译 |
 |---|---|---|---|
-| 100127C0 | BuildingExt::ExtData::KickOutClones [source_0.A] | 使用键 | decompiled/functions/100127C0.c |
+| 100127C0 | BuildingExt::ExtData::KickOutClones [source_0.A,3.0✓] | 使用键 | decompiled/functions/100127C0.c |
+| 10061B00 | `Debug::LogFlushed_Severity` | 被钩子调用 | decompiled/functions/10061B00.c |
+| 100617C0 | `Debug::FatalErrorAndExit` | 被钩子调用 | decompiled/functions/100617C0.c |
 | 1000AC70 | `Randomizer::RandomRanged` | 被钩子调用 | decompiled/functions/1000AC70.c |
-| 10061A30 | `RadarClass::First_Time` | 被钩子调用 | decompiled/functions/10061A30.c |
-| 10061AC0 | `Debug::Log` | 被钩子调用 | decompiled/functions/10061AC0.c |
+| 1000D430 | `InfantryTypeClass::Find` | 被钩子调用 | decompiled/functions/1000D430.c |
+| 100619C0 | `Debug::LogFileClose` | 被钩子调用 | decompiled/functions/100619C0.c |
+| 10061A30 | `Debug::LogFileOpen` | 被钩子调用 | decompiled/functions/10061A30.c |
+| 10061AC0 | `Debug::LogFlushed` | 被钩子调用 | decompiled/functions/10061AC0.c |

@@ -115,6 +115,7 @@ MECHANISMS = [
     ("S.sonar", "M5", "SonarPulse", "S.core", "none", ""),
     ("S.paradrop", "M5", "ParaDrop 超武", "S.core,H.paradrop", "partial", ""),
     ("S.firewall", "M5", "Firewall 超武", "S.core,B.firestorm", "none", ""),
+    ("S.battery", "M5", "Battery 超武（3.0 新增，供电/保持在线）", "S.core", "none", ""),
     # M6 cross-state
     ("T.ic", "M6", "铁幕/力场/超时空修正与免疫", "", "none", ""),
     ("T.berserk", "M6", "狂暴与绑架免疫", "", "none", ""),
@@ -138,6 +139,8 @@ RULES = [
     ("S.money", "SWType", r"^(Money\.|SW\.ChargeToDrainRatio|Message\.InsufficientFunds|EVA\.InsufficientFunds)"),
     ("S.gates", "SWType", r"^SW\.(AuxBuildings|NegBuildings|AllowAI|AllowPlayer|RequiredHouses|ForbiddenHouses)"),
     ("S.ai", "SWType", r"^SW\.(AI|UseAITargeting|AutoFire)"),
+    ("S.battery", None, r"^Battery\."),
+    ("S.paradrop", "SWType", r"^ParaDrop\["),
     ("S.chrono", None, r"^Chronosphere\."),
     ("S.dominator", None, r"^Dominator\."),
     ("S.droppod", None, r"^(DropPod\.|DropPod(Maximum|Minimum|Trailer|Types)$)"),
@@ -235,7 +238,7 @@ RULES = [
     ("H.side", "Side", r"^(DefaultDisguise|EVA\.Tag|ToolTipColor|MessageTextColor|AI\.)"),
     ("H.sidepresent", "Side", r".*"),
     # UI / shell
-    ("U.shell", r"UISettings|Campaign|MoviesList|RMG|Skirmish", r".*"),
+    ("U.shell", r"UISettings|Interface|Campaign|MoviesList|RMG|Skirmish", r".*"),
     ("R.misc", "Rules", r".*"),
 ]
 

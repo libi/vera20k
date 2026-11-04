@@ -15,9 +15,9 @@
 
 | 键 | 类 | 类型 | 默认 | 读取位置 | 使用点状态 | VERA20K 字面量 |
 |---|---|---|---|---|---|---|
-| `DamageRange` | ParticleTypeClass | — | — | src/Recovered/ParticleTypeClass.cpp:27 | unscanned | — |
+| `DamageRange` | ParticleType | — | — | src/Ext/ParticleType/Body.cpp:27 | unscanned | — |
 
 ## 钩子（0）
 
-先读 3.0 反编译（`decompiled`），再读还原源码（`src`）；状态为 `kept` 的是 0.A 源码，函数体可能已被 3.0 修改。
+"源码"列的函数体已按 3.0 翻译或对照 3.0 核对（"3.0 核对"列为 ✓）；有疑问时以 3.0 反编译为准。`⚠改过` 表示 3.0 相对 0.A 改过这个钩子，源码中已是 3.0 写法。
 
