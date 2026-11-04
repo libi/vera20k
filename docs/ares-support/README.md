@@ -10,8 +10,11 @@
 | `catalog.tsv` | 逐键目录：每个 Ares 键的所属机制、里程碑、类、节、类型、构造函数默认值、读取函数与源码位置、使用函数、VERA20K 线索与状态 |
 | `mechanisms.tsv` | 机制表：ID、里程碑、依赖、VERA20K 现状、键数、涉及的热点函数数 |
 | `hotspots.tsv` | 热点函数表：被多个机制同时钩住，或钩子数达到 5 个的 gamemd 函数，列出每个钩子和所属机制 |
+| `mechanisms/<id>.md` | 每个机制一页阅读索引：键、要读的 Ares 钩子和函数（3.0 反编译与源码位置）、钩子所在的 gamemd 函数、共用的热点函数、VERA20K 中已引用这些原生函数的文件，以及人工备注区 |
 
-三个文件由 `tools/ares_support/build_catalog.py` 生成，机制划分规则在 `tools/ares_support/mechanisms.py`。
+表格由 `tools/ares_support/build_catalog.py` 生成，索引页由 `build_index.py` 生成，机制划分规则在 `tools/ares_support/mechanisms.py`。
+
+本文档不重复写每个机制的逻辑：实现者（人或 AI）照索引页直接读 ares-src 工作区的代码，方法见第 6 节。
 本文档中的地址、函数名和源码路径都只是线索，落地时按 [项目契约](../../AGENTS.md) 对照原生指令确认。
 
 ## 1. 目标与范围
@@ -280,19 +283,52 @@ Ares 侧数据的已知缺口（来自 Ares 3.0 还原工作区，下称 `ares-s
 
 ## 6. 单个机制的开发流程
 
+### 准备
+
+需要一份本地的 ares-src 工作区（Ares 3.0 还原工作区，含 `decompiled/`、`src/`、`reference/gamemd_hooks/`、
+`symbols/`、`report/`）。索引页里的路径都相对于它。让 AI 实现某个机制时，告诉它工作区路径和机制 ID 即可，例如：
+
+> 按 `docs/ares-support/README.md` 第 6 节实现 `B.rubble`，ares-src 在 `../ares-src`。
+
+### 读代码的优先级
+
+同一段行为，几份来源不一致时，按下面顺序取信：
+
+1. **gamemd 原版上下文**（`reference/gamemd_hooks/<函数地址>.c`，钩子处标 `// >>> HOOK`）：决定钩子在原版流程中的时机，
+   以及跳转地址的含义（返回的地址落在原版哪个分支）。
+2. **Ares 3.0 反编译**（`decompiled/functions/<地址>.c`）：3.0 实际做了什么。这是行为的依据。
+3. **还原源码**：`src/Recovered/`（3.0 钩子的 C++ 翻译，未编译）、`src/Ext/*`（0.A 源码，已合并 3.0 的成员、默认值和读取）。
+   源码可读性好，但只能当阅读辅助，必须和第 2 项核对。
+
+还原源码和注释数据库都可能有错。任何一处与反编译不一致，以反编译为准，并把差异写进索引页的备注区。
+
+### 已知的坑
+
+- **状态为 `kept` 的钩子只有 0.A 源码，3.0 可能改过。** 索引页标了 `⚠改过` 的一定改过，没标的也可能改过。
+  样板 `B.rubble` 里，0.A 的工程师钩子在放置失败时会恢复原建筑；3.0 删掉了这段，改为销毁旧建筑，并且不消耗工程师。
+- **反编译中的虚函数调用**写作 `(**(code **)(*p + 0xd4))()`：用 `ares-src/reference/gamemd_vtables.tsv` 按类和偏移查函数名
+  （例如 BuildingClass +0xD4 为 `Limbo`，+0xF8 为 `UnInit`，+0x100 为 `ExitObject_Main`）。
+- **字段偏移**：Ares 扩展字段用 `symbols/extdata_fields.tsv` 查；gamemd 字段用 `reference/gamemd_structs.tsv` 查。
+  3.0 把扩展指针存在 gamemd 对象的空闲字段里（如 BuildingType +0xE24、TechnoType +0x2FC），见 `symbols/ares_ext_offsets.tsv`。
+- **Ghidra 会混淆参数和寄存器**（样板中归属与血量两个参数的编号被混在一起）。结果可疑时，要看原生指令确认。
+- **钩子返回值是跳转地址。** 0 表示继续执行原版代码，其他值要在原版上下文中找到对应位置，才能知道走了哪个分支。
+- **随机数**：用到 `ScenarioClass::Random` 的地方（如 `OwnerHouseKind::Random`）都会影响确定性，要记录取随机数的次数和顺序。
+
 ### 步骤
 
-1. **核实数据。** 从 `catalog.tsv` 筛出本机制的键，再补上同一批使用函数涉及的其他键。逐个使用函数处理：
-   - `inferred` 的条目要确认确实是本机制的；
-   - 只有 0.A 源码的（`hook_kept_0.A` / `source_0.A`），对照 `ares-src/decompiled/functions/<地址>.c` 确认 3.0 的版本；
-   - `no_use_found` / `unscanned` 的键，要找出读取后被用在哪里。
-2. **找钩子和原版上下文。** 在 `ares-src/report/hooks.tsv` 查钩子，在 `reference/gamemd_hooks/` 看被钩的原版函数
-   （标有 `// >>> HOOK`），确认钩子做了什么：读哪些字段、跳过哪段原版代码、是否提前返回。
-3. **找 VERA20K 负责者。** 按 gamemd 地址（如 `6FDD50`）和原生函数名搜索代码，确定每个使用点挂在哪个负责者上。
-   找不到负责者时，先确认原版功能本身是否已经移植。
-4. **写规格。** 用下面的模板，写在本机制的说明文档里（沿用 `docs/ares-<机制>.md` 的风格）。
-5. **实现。** 按 PR 拆分实现（见下）。
-6. **验收。** 按第 9 节验收，然后更新 `catalog.tsv` 的 `vera_status`、`docs/ares.md` 的支持列表和致谢。
+1. **读索引页**（`mechanisms/<id>.md`）和其中的备注区。
+2. **核实数据。** 对表中每个使用函数：
+   - `inferred` 的条目确认是否真属于本机制；
+   - `no_use_found` / `unscanned` 的键，在 `decompiled/` 中搜字段偏移，找出读取后用在哪里；
+   - 发现机制划分有误时，改 `tools/ares_support/mechanisms.py` 并重新生成。
+3. **按上面的优先级读代码**，弄清每个钩子的时机、条件、对状态的修改、跳转，以及调用的辅助函数（索引页"非钩子函数"一节）。
+4. **找 VERA20K 负责者。** 索引页最后一列列出了已经引用该 gamemd 函数的文件，从那里开始找；也可以按地址（如 `4415F0`）
+   和原生函数名搜索。找不到负责者时，先确认原版功能本身是否已经移植。
+5. **把结论写进备注区**：3.0 与 0.A 的差异、确认过的时机和分支、未决问题。只写结论和地址，不贴反编译代码。
+   比较复杂的机制，可以另写 `docs/ares-<机制>.md` 给玩家和模组作者看，格式参照现有的 Ares 文档。
+6. **实现。** 按下面的 PR 拆分。Rust 代码按 VERA20K 自己的结构写，在旁边注明原生地址（gamemd 地址和 Ares 3.0 地址），
+   不逐行转写 C++。
+7. **验收。** 按第 9 节验收，然后更新 `catalog.tsv` 的 `vera_status`、`docs/ares.md` 的支持列表和致谢。
 
 ### PR 拆分
 
@@ -305,7 +341,9 @@ Ares 侧数据的已知缺口（来自 Ares 3.0 还原工作区，下称 `ares-s
 
 每个 PR 按项目要求写：改了什么、为什么（原生地址）、怎么测的，约 15 行。
 
-### 规格模板
+### 规格模板（可选）
+
+需要先审规格再实现时（例如热点函数或 M6 的交叉机制），按下面的模板写进备注区；一般机制不必写这么全。
 
 ```
 键：           Promote.EliteSound                  （精确大小写）
@@ -370,10 +408,11 @@ VERA20K 负责者：读取在 …，使用在 …
 ## 10. 进度跟踪
 
 - `catalog.tsv` 的 `vera_status` 列手工维护。重新生成目录时，脚本按 `(cls, key)` 保留已填写的值。
-- 更新目录：
+- 更新目录和索引页（备注区和 `vera_status` 会保留）：
 
   ```sh
   python3 -I tools/ares_support/build_catalog.py <ares-src 路径>
+  python3 -I tools/ares_support/build_index.py <ares-src 路径>
   ```
 
 - 机制划分有误时，改 `tools/ares_support/mechanisms.py` 的 `RULES`，再重新生成。
