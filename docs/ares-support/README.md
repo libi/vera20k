@@ -15,8 +15,8 @@
 表格由 `tools/ares_support/build_catalog.py` 生成，索引页由 `build_index.py` 生成，机制划分规则在 `tools/ares_support/mechanisms.py`。
 
 本文档不重复写每个机制的逻辑：实现者（人或 AI）照索引页直接读 ares-src 工作区的代码，方法见第 6 节。
-数据基于 ares-src 的 `recover/inj-layout` 分支（`d310643a`，2026-11-04）：该版本的函数体已全部按 3.0 翻译或核对过，
-并能编译链接。`main` 分支（`10c1c922`）是中央合并后的旧版，保留钩子仍是 0.A 写法，不要用它。
+数据基于 ares-src `main` 的 `d310643a`（2026-11-04）：该版本的函数体已全部按 3.0 翻译或核对过，并能编译链接。
+更早的 `10c1c922`（中央合并后）中保留钩子仍是 0.A 写法，不要用它。
 本文档中的地址、函数名和源码路径都只是线索，落地时按 [项目契约](../../AGENTS.md) 对照原生指令确认。
 
 ## 1. 目标与范围
@@ -312,7 +312,7 @@ Ares 侧数据的已知缺口（来自 Ares 3.0 还原工作区，下称 `ares-s
 
 ### 读代码的优先级
 
-ares-src 必须是 `recover/inj-layout` 或更新的版本（见文首）。
+ares-src 必须是 `d310643a` 或更新的版本（见文首）。
 
 1. **还原源码**（`src/`）：主要阅读对象。函数体已按 3.0 翻译或对照 3.0 核对，改动处注有 `// 3.0 (Ares.dll 地址)`；
    核对结果记录在 `symbols/verified_30.tsv`，索引页"3.0 核对"列据此标 ✓。
@@ -325,8 +325,8 @@ ares-src 必须是 `recover/inj-layout` 或更新的版本（见文首）。
 
 ### 已知的坑
 
-- **不要用 ares-src 的 `main` 分支。** 那里的保留钩子仍是 0.A 写法。例如 `B.rubble` 的工程师钩子：0.A 在放置失败时
-  恢复原建筑；3.0 改为销毁旧建筑，并且不消耗工程师。`recover/inj-layout` 中已是 3.0 写法。
+- **不要用 `d310643a` 之前的 ares-src。** 那时保留钩子仍是 0.A 写法。例如 `B.rubble` 的工程师钩子：0.A 在放置失败时
+  恢复原建筑；3.0 改为销毁旧建筑，并且不消耗工程师。新版中已是 3.0 写法。
 - **搜源码用 `rg` 或 `grep -a`。** `src/Ext/BuildingType/Body.cpp` 是 Latin-1 编码，macOS 自带的 `grep` 在 UTF-8 环境下
   搜不到其中的内容，也不报错（例如 `BuildingTypeExt::SwitchRubble` 的定义就在这里）。
 - **还原源码可以编译，但从未在游戏中运行过**（需要 Syringe）。`report/body_check*.tsv` 列出了与 Ares.dll 静态比对仍不一致的

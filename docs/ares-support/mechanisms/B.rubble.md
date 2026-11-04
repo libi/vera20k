@@ -8,7 +8,7 @@
 
 ## 备注
 <!-- notes -->
-示例备注（2026-11-04，对照 ares-src `recover/inj-layout` 的源码和 3.0 反编译）。
+示例备注（2026-11-04，对照 ares-src `d310643a` 的源码和 3.0 反编译）。
 
 **表现**：设了 `Rubble.Destroyed` 的建筑被摧毁时，原地换成废墟建筑；在废墟上设 `Rubble.Intact`，友方工程师进入后恢复成原建筑。`*.Remove=yes` 只移除、不生成新建筑。
 
