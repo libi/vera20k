@@ -1693,12 +1693,17 @@ impl Simulation {
             world_z,
             COMBAT_EXPLOSION_Z_ADJUST,
             None,
+            true,
         )
     }
 
     /// [`Self::spawn_combat_explosion_anim`] with the Phobos warhead
     /// `AnimZAdjust` substituted for the stock combat row's -15 and the
-    /// tail's invoker House installed after construction.
+    /// tail's invoker House installed after construction. Unless the caller
+    /// `keeps` the anim (the nuke awaits its NUKEBALL), a type that changes at
+    /// most its marks runs as a presentation anim
+    /// ([`Self::effect_anim_constructor`]); [`Self::spawn_combat_explosion_anim`]
+    /// returns an anim callers may keep, so it is always an ordinary one.
     pub(crate) fn spawn_combat_explosion_anim_with_z_adjust(
         &mut self,
         rules: &RuleSet,
@@ -1711,6 +1716,7 @@ impl Simulation {
         world_z: i32,
         z_adjust: i32,
         owner_house: Option<InternedId>,
+        keeps: bool,
     ) -> Option<AnimId> {
         let descriptor = AnimClassSpawnDescriptor {
             delay: 0,
@@ -1724,7 +1730,11 @@ impl Simulation {
             z: world_z,
             ..AnimWorldCoord::from_cell_sub_z(rx, ry, sub_x, sub_y, z)
         };
-        let (constructor, marks) = self.effect_anim_constructor(rules, type_name, true);
+        let (constructor, marks) = if keeps {
+            (AnimConstructorInput::Runtime, false)
+        } else {
+            self.effect_anim_constructor(rules, type_name, true)
+        };
         match self.spawn_anim_at_world_with_constructor(
             rules,
             descriptor,
@@ -1783,7 +1793,7 @@ impl Simulation {
 
     /// The constructor a muzzle flash, an impact or a trailer of type
     /// `type_id` takes: a presentation anim when the type changes nothing but
-    /// its picture ([`crate::rules::art_data::ArtRegistry::anim_presentation_only`]),
+    /// its picture ([`crate::rules::art_data::ArtRegistry::anim_picture`]),
     /// else an ordinary one. Only producers that keep no hold on the anim ask.
     /// With `place_marks`, a type that also marks the ground
     /// ([`AnimPicture::Marks`]) is one too, and the second value asks the
@@ -2149,6 +2159,9 @@ impl Simulation {
                 Some(self.interner.intern(sound))
             }
         });
+        if presentation {
+            self.intern_presentation_chain(rules, config);
+        }
         let stable_id = if local {
             self.substrate.anims.allocate_local_id()
         } else {
@@ -3404,7 +3417,8 @@ impl Simulation {
     }
 
     /// Place the marks the presentation explosions made since the last call
-    /// queued ([`QueuedAnimMarks`]), in the order they were made.
+    /// queued ([`QueuedAnimMarks`]), in the order they were made; whether
+    /// there were any.
     ///
     /// VERA-only sim-scale deviation: gamemd's `AnimClass::Middle @
     /// 0x00424F00` marks the ground at the anim's middle frame, drawing the
@@ -3417,13 +3431,14 @@ impl Simulation {
         &mut self,
         rules: &RuleSet,
         overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
-    ) {
+    ) -> bool {
         if self.queued_anim_marks.is_empty() {
-            return;
+            return false;
         }
         let seed = u64::from(self.session.binary_frame()) ^ ANIM_MARKS_SEED;
         let scenario_rng = std::mem::replace(&mut self.scenario_rng, SimRng::new(seed));
-        for queued in std::mem::take(&mut self.queued_anim_marks) {
+        let queued_marks = std::mem::take(&mut self.queued_anim_marks);
+        for queued in queued_marks {
             let name = self.interner.resolve(queued.type_id);
             if let Some(config) = rules.art().anim_runtime_config(name) {
                 self.place_anim_marks(
@@ -3437,6 +3452,40 @@ impl Simulation {
             }
         }
         self.scenario_rng = scenario_rng;
+        true
+    }
+
+    /// Intern now every name a presentation anim of type `config` may intern
+    /// on a later visit: the types it can become or make (`Next=`,
+    /// `TrailerAnim=`, `ExpireAnim=`, `BounceAnim=`) and their StopSounds.
+    /// A game loaded or rejoined while the anim lives lacks the anim, so the
+    /// interner must not wait for its visits to learn them.
+    fn intern_presentation_chain(&mut self, rules: &RuleSet, config: &AnimTypeRuntimeConfig) {
+        let children = |config: &AnimTypeRuntimeConfig| {
+            [
+                config.next.clone(),
+                config.trailer_anim.clone(),
+                config.expire_anim.clone(),
+                config.bounce_anim.clone(),
+            ]
+            .into_iter()
+            .flatten()
+        };
+        let mut pending: Vec<String> = children(config).collect();
+        let mut seen: Vec<String> = Vec::new();
+        while let Some(name) = pending.pop() {
+            if seen.contains(&name) {
+                continue;
+            }
+            self.interner.intern(&name);
+            if let Some(child) = rules.art().anim_runtime_config(&name) {
+                if let Some(sound) = child.stop_sound.as_deref() {
+                    self.interner.intern(sound);
+                }
+                pending.extend(children(child));
+            }
+            seen.push(name);
+        }
     }
 
     /// Whether presentation anim `id` rides an owner its UnInit has ended.
@@ -4883,7 +4932,7 @@ pub(crate) enum AnimConstructorInput {
     /// of [`Simulation::spawn_move_flash`].
     Local,
     /// A presentation anim: a local anim of a type that changes nothing but
-    /// its own picture ([`crate::rules::art_data::ArtRegistry::anim_presentation_only`]),
+    /// its own picture ([`crate::rules::art_data::ArtRegistry::anim_picture`]),
     /// which every game makes alike. It takes no Display slot, no Logic slot,
     /// no unique id and no Scenario draw, and nothing in the simulation holds
     /// it; the presentation draws it at the end of its layer
@@ -4898,7 +4947,9 @@ pub(crate) enum AnimConstructorInput {
     /// whose only reader caps the fall rate (`ObjectFall`); trigger: a Techno
     /// that starts falling within a few frames of firing; effect: it falls at
     /// the ordinary rate; frequency: rare (a bridge collapsing under a firing
-    /// unit). It ends with its owner, where gamemd detaches it in place.
+    /// unit). It ends with its owner's UnInit, where gamemd detaches it in
+    /// place; an owner that enters Limbo (a transport, a garrison) keeps it
+    /// drawing until its own end, a few frames.
     Presentation,
 }
 
@@ -6266,10 +6317,9 @@ mod tests {
             // match native stock_FDHD rows; Rate=900/Normalized=no selects one
             // frame per visit for this fixture. This is not a claim that retail
             // NAMISL is produced by combat or that its Building host is bound.
-            // Sticky= keeps both ordinary anims (`ArtRegistry::anim_picture`).
             let rules = runtime_rules(
-                "[TWLT036]\nStart=16\nLoopStart=0\nLoopEnd=32\nEnd=31\nShadow=yes\nRate=900\nNormalized=no\nSticky=yes\n\n\
-                 [NEIGHBOR]\nEnd=64\nLoopCount=-1\nRate=900\nNormalized=no\nSticky=yes\n",
+                "[TWLT036]\nStart=16\nLoopStart=0\nLoopEnd=32\nEnd=31\nShadow=yes\nRate=900\nNormalized=no\n\n\
+                 [NEIGHBOR]\nEnd=64\nLoopCount=-1\nRate=900\nNormalized=no\n",
                 &[("TWLT036", 64), ("NEIGHBOR", 64)],
             );
             // Native load resets Scenario RNG to seed zero. Keep this fixture
@@ -6559,6 +6609,7 @@ mod tests {
                 0,
                 7,
                 Some(house),
+                true,
             )
             .unwrap();
         let anim = sim.anim(id).unwrap();
@@ -7620,7 +7671,19 @@ mod tests {
         let name = sim.interner.intern("MARK");
         let center = crate::util::lepton::CELL_CENTER_LEPTON;
         let id = sim
-            .spawn_combat_explosion_anim(&rules, name, 4, 4, center, center, 0, 0)
+            .spawn_combat_explosion_anim_with_z_adjust(
+                &rules,
+                name,
+                4,
+                4,
+                center,
+                center,
+                0,
+                0,
+                COMBAT_EXPLOSION_Z_ADJUST,
+                None,
+                false,
+            )
             .unwrap();
         assert!(sim.anim(id).unwrap().is_presentation());
         assert_eq!(sim.substrate.display.layer_of(id), None);
@@ -7636,13 +7699,21 @@ mod tests {
             "its own Middle leaves the mark to the queue"
         );
 
-        sim.place_queued_anim_marks(&rules, None);
+        assert!(sim.place_queued_anim_marks(&rules, None));
         assert_eq!(marks_placed(&sim), 1);
         assert_eq!(
             sim.smudge_grid.as_ref().unwrap().cell(4, 4).type_id,
             Some(0)
         );
         assert_eq!(sim.scenario_rng.logical_state(), scenario);
+        assert!(sim.queued_anim_marks.is_empty());
+
+        // A producer that keeps its anim (the nuke awaits NUKEBALL) gets an
+        // ordinary one, which keeps its own Middle.
+        let kept = sim
+            .spawn_combat_explosion_anim(&rules, name, 4, 4, center, center, 0, 0)
+            .unwrap();
+        assert!(!sim.anim(kept).unwrap().is_presentation());
         assert!(sim.queued_anim_marks.is_empty());
     }
 

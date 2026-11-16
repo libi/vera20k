@@ -456,7 +456,11 @@ impl Simulation {
                 // and passengers board in their class PerCellProcess.
             }
             FrameStep::LocalAnims => {
-                self.place_queued_anim_marks(rules, overlay_registry);
+                // A crater's ore reduction reaches path searches this frame,
+                // as the object pass's commits do (`TerrainNavigation`).
+                if self.place_queued_anim_marks(rules, overlay_registry) {
+                    self.finish_terrain_navigation_changes(rules, &[]);
+                }
                 for id in self.substrate.anims.local_ids() {
                     // No expiry reaches a presentation anim, which nothing
                     // lists: it ends with its owner's UnInit instead
