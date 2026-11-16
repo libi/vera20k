@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::map::resolved_terrain::ResolvedTerrainGrid;
-use crate::rules::art_data::AnimTypeRuntimeConfig;
+use crate::rules::art_data::{AnimPicture, AnimTypeRuntimeConfig};
 use crate::rules::house_colors::HouseColorIndex;
 use crate::rules::overlay_types::TiberiumImageError;
 use crate::rules::ruleset::RuleSet;
@@ -62,6 +62,19 @@ mod flaming_guy;
 #[cfg(all(test, tests_sim_a_b))]
 #[path = "anim_animated_tiberium_tests.rs"]
 mod animated_tiberium_tests;
+
+/// The Middle marks of a presentation explosion, queued by its producer for
+/// [`Simulation::place_queued_anim_marks`]. VERA-only; saved with the world so
+/// a game loaded or rejoined between frames places them too, never hashed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct QueuedAnimMarks {
+    type_id: InternedId,
+    /// Its constructor's coordinate, both its Location and its GetCoords.
+    coord: AnimWorldCoord,
+}
+
+/// Mixed into the frame number to seed the queued marks' stream.
+const ANIM_MARKS_SEED: u64 = 0x5343_4F52_4348_0001;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AnimWorldCoord {
@@ -1711,7 +1724,7 @@ impl Simulation {
             z: world_z,
             ..AnimWorldCoord::from_cell_sub_z(rx, ry, sub_x, sub_y, z)
         };
-        let constructor = self.effect_anim_constructor(rules, type_name);
+        let (constructor, marks) = self.effect_anim_constructor(rules, type_name, true);
         match self.spawn_anim_at_world_with_constructor(
             rules,
             descriptor,
@@ -1720,6 +1733,12 @@ impl Simulation {
             FrameEffects::default(),
         ) {
             Ok(id) => {
+                if marks {
+                    self.queued_anim_marks.push(QueuedAnimMarks {
+                        type_id: type_name,
+                        coord: world_coord,
+                    });
+                }
                 if let Some(house) = owner_house {
                     self.substrate.set_anim_owner_house(id, house);
                     // `SetAnimOwnerHouseKind` updates LightConvert only for a
@@ -1766,18 +1785,19 @@ impl Simulation {
     /// `type_id` takes: a presentation anim when the type changes nothing but
     /// its picture ([`crate::rules::art_data::ArtRegistry::anim_presentation_only`]),
     /// else an ordinary one. Only producers that keep no hold on the anim ask.
+    /// With `place_marks`, a type that also marks the ground
+    /// ([`AnimPicture::Marks`]) is one too, and the second value asks the
+    /// producer to queue those marks ([`Self::place_queued_anim_marks`]).
     pub(crate) fn effect_anim_constructor(
         &self,
         rules: &RuleSet,
         type_id: InternedId,
-    ) -> AnimConstructorInput {
-        if rules
-            .art()
-            .anim_presentation_only(self.interner.resolve(type_id))
-        {
-            AnimConstructorInput::Presentation
-        } else {
-            AnimConstructorInput::Runtime
+        place_marks: bool,
+    ) -> (AnimConstructorInput, bool) {
+        match rules.art().anim_picture(self.interner.resolve(type_id)) {
+            Some(AnimPicture::Plain) => (AnimConstructorInput::Presentation, false),
+            Some(AnimPicture::Marks) if place_marks => (AnimConstructorInput::Presentation, true),
+            _ => (AnimConstructorInput::Runtime, false),
         }
     }
 
@@ -2536,7 +2556,7 @@ impl Simulation {
             // The strict binder binds the parent's whole `TrailerAnim=`
             // closure; the tolerant one stops on a malformed image header, so
             // a mod's trailer can be unbindable here. It is then not spawned.
-            let constructor = self.effect_anim_constructor(rules, trailer_type);
+            let (constructor, _) = self.effect_anim_constructor(rules, trailer_type, false);
             match self.spawn_anim_at_world_with_constructor(
                 rules,
                 descriptor,
@@ -3381,6 +3401,42 @@ impl Simulation {
             &self.substrate.entities,
             self.resolved_terrain.as_ref(),
         ))
+    }
+
+    /// Place the marks the presentation explosions made since the last call
+    /// queued ([`QueuedAnimMarks`]), in the order they were made.
+    ///
+    /// VERA-only sim-scale deviation: gamemd's `AnimClass::Middle @
+    /// 0x00424F00` marks the ground at the anim's middle frame, drawing the
+    /// scorch-or-crater pick, the crater's ore reduction and the smudge pick
+    /// from the Scenario stream. Here the marks land in the frame's local
+    /// anim step after the explosion is made, a few frames early, and draw a
+    /// stream of their own seeded by the frame, so the Scenario stream forks
+    /// from gamemd's. Every game draws alike, so the match stays in step.
+    pub(crate) fn place_queued_anim_marks(
+        &mut self,
+        rules: &RuleSet,
+        overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
+    ) {
+        if self.queued_anim_marks.is_empty() {
+            return;
+        }
+        let seed = u64::from(self.session.binary_frame()) ^ ANIM_MARKS_SEED;
+        let scenario_rng = std::mem::replace(&mut self.scenario_rng, SimRng::new(seed));
+        for queued in std::mem::take(&mut self.queued_anim_marks) {
+            let name = self.interner.resolve(queued.type_id);
+            if let Some(config) = rules.art().anim_runtime_config(name) {
+                self.place_anim_marks(
+                    rules,
+                    overlay_registry,
+                    config,
+                    queued.type_id,
+                    queued.coord,
+                    queued.coord,
+                );
+            }
+        }
+        self.scenario_rng = scenario_rng;
     }
 
     /// Whether presentation anim `id` rides an owner its UnInit has ended.
@@ -4463,12 +4519,29 @@ impl Simulation {
         if !(config.scorch || config.crater) {
             return;
         }
-        let (Some(stored), Some(coord)) = (
-            self.anim(id).map(|anim| anim.world_coord),
+        // A presentation anim's producer placed its marks
+        // ([`Self::place_queued_anim_marks`]).
+        let (Some(anim), Some(coord)) = (
+            self.anim(id).filter(|anim| !anim.is_presentation()),
             self.anim_absolute_coord(id),
         ) else {
             return;
         };
+        let (type_id, stored) = (anim.type_id, anim.world_coord);
+        self.place_anim_marks(rules, overlay_registry, config, type_id, stored, coord);
+    }
+
+    /// The marks half of [`Self::anim_middle`] for an anim of type `type_id`
+    /// whose stored Location is `stored` and whose GetCoords is `coord`.
+    fn place_anim_marks(
+        &mut self,
+        rules: &RuleSet,
+        overlay_registry: Option<&crate::rules::overlay_types::OverlayTypeRegistry>,
+        config: &AnimTypeRuntimeConfig,
+        type_id: InternedId,
+        stored: AnimWorldCoord,
+        coord: AnimWorldCoord,
+    ) {
         let stored = crate::sim::projectile::ProjectileCoord::new(stored.x, stored.y, stored.z);
         let ground = crate::sim::projectile::projectile_ground_z(
             self.resolved_terrain.as_ref(),
@@ -4478,15 +4551,10 @@ impl Simulation {
         if stored.z.wrapping_sub(ground) >= ANIM_MIDDLE_MAX_HEIGHT {
             return;
         }
-        let type_name = self
-            .anim(id)
-            .map(|anim| self.interner.resolve(anim.type_id).to_ascii_uppercase());
-        let (width, height) = type_name
-            .as_deref()
-            .and_then(|name| rules.art().get(name))
-            .map_or((30, 30), |entry| {
-                (i32::from(entry.frame_width), i32::from(entry.frame_height))
-            });
+        let type_name = self.interner.resolve(type_id).to_ascii_uppercase();
+        let (width, height) = rules.art().get(&type_name).map_or((30, 30), |entry| {
+            (i32::from(entry.frame_width), i32::from(entry.frame_height))
+        });
         let marks = crate::sim::combat::smudge_dispatch::AnimMiddleMarks {
             scorch: config.scorch,
             crater: config.crater,
@@ -6198,9 +6266,10 @@ mod tests {
             // match native stock_FDHD rows; Rate=900/Normalized=no selects one
             // frame per visit for this fixture. This is not a claim that retail
             // NAMISL is produced by combat or that its Building host is bound.
+            // Sticky= keeps both ordinary anims (`ArtRegistry::anim_picture`).
             let rules = runtime_rules(
-                "[TWLT036]\nStart=16\nLoopStart=0\nLoopEnd=32\nEnd=31\nShadow=yes\nRate=900\nNormalized=no\n\n\
-                 [NEIGHBOR]\nEnd=64\nLoopCount=-1\nRate=900\nNormalized=no\n",
+                "[TWLT036]\nStart=16\nLoopStart=0\nLoopEnd=32\nEnd=31\nShadow=yes\nRate=900\nNormalized=no\nSticky=yes\n\n\
+                 [NEIGHBOR]\nEnd=64\nLoopCount=-1\nRate=900\nNormalized=no\nSticky=yes\n",
                 &[("TWLT036", 64), ("NEIGHBOR", 64)],
             );
             // Native load resets Scenario RNG to seed zero. Keep this fixture
@@ -6448,7 +6517,8 @@ mod tests {
 
     #[test]
     fn signed_impact_packet_keeps_exact_xy_through_explosion_admission() {
-        let rules = runtime_rules("[TWLT036]\nEnd=8\n", &[("TWLT036", 8)]);
+        // Sticky= keeps it an ordinary anim (`ArtRegistry::anim_picture`).
+        let rules = runtime_rules("[TWLT036]\nEnd=8\nSticky=yes\n", &[("TWLT036", 8)]);
         for (x, y) in [(-257, -511), (-1, 1811), (-128_128, 5248), (2694, 5253)] {
             let mut sim = Simulation::new();
             let type_id = sim.interner.intern("TWLT036");
@@ -7524,11 +7594,56 @@ mod tests {
         (rules, sim)
     }
 
+    /// An ordinary MARK anim, as the producers that keep their anims make it
+    /// (a combat explosion makes a presentation one).
     fn spawn_mark(sim: &mut Simulation, rules: &RuleSet, world_z: i32) -> AnimId {
         let name = sim.interner.intern("MARK");
         let center = crate::util::lepton::CELL_CENTER_LEPTON;
-        sim.spawn_combat_explosion_anim(rules, name, 4, 4, center, center, 0, world_z)
-            .unwrap()
+        let descriptor = AnimClassSpawnDescriptor {
+            delay: 0,
+            loop_count: 1,
+            ..AnimClassSpawnDescriptor::new(name, 4, 4, center, center, 0)
+        };
+        let coord = AnimWorldCoord {
+            z: world_z,
+            ..AnimWorldCoord::from_cell_sub_z(4, 4, center, center, 0)
+        };
+        sim.spawn_anim_at_world(rules, descriptor, coord).unwrap()
+    }
+
+    /// A combat explosion that marks the ground runs as a presentation anim;
+    /// the local anim step places its mark from the frame's own stream and
+    /// leaves the Scenario stream alone.
+    #[test]
+    fn a_presentation_explosion_queues_its_mark_off_the_scenario_stream() {
+        let (rules, mut sim) = middle_world("[MARK]\nRate=900\nCrater=yes\n", 13);
+        let name = sim.interner.intern("MARK");
+        let center = crate::util::lepton::CELL_CENTER_LEPTON;
+        let id = sim
+            .spawn_combat_explosion_anim(&rules, name, 4, 4, center, center, 0, 0)
+            .unwrap();
+        assert!(sim.anim(id).unwrap().is_presentation());
+        assert_eq!(sim.substrate.display.layer_of(id), None);
+        let scenario = sim.scenario_rng.logical_state();
+        for frame in 1..40 {
+            sim.session.set_binary_frame_for_test(frame);
+            sim.visit_anim(id, &rules, None, crate::sim::world::FrameEffects::default())
+                .unwrap();
+        }
+        assert_eq!(
+            marks_placed(&sim),
+            0,
+            "its own Middle leaves the mark to the queue"
+        );
+
+        sim.place_queued_anim_marks(&rules, None);
+        assert_eq!(marks_placed(&sim), 1);
+        assert_eq!(
+            sim.smudge_grid.as_ref().unwrap().cell(4, 4).type_id,
+            Some(0)
+        );
+        assert_eq!(sim.scenario_rng.logical_state(), scenario);
+        assert!(sim.queued_anim_marks.is_empty());
     }
 
     fn marks_placed(sim: &Simulation) -> usize {
@@ -7769,8 +7884,9 @@ mod tests {
     #[test]
     fn trailer_without_preintern_is_visited_and_guarded_in_same_live_walk() {
         let rules = runtime_rules(
+            // Sticky= keeps CHILD an ordinary anim (`ArtRegistry::anim_picture`).
             "[PARENT]\nRate=0\nEnd=2\nTrailerAnim=CHILD\nTrailerSeperation=1\n\n\
-             [CHILD]\nRate=900\nEnd=2\nLoopCount=1\n",
+             [CHILD]\nRate=900\nEnd=2\nLoopCount=1\nSticky=yes\n",
             &[("PARENT", 2), ("CHILD", 2)],
         );
         let mut sim = Simulation::new();

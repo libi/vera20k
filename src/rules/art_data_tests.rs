@@ -1695,7 +1695,7 @@ fn ares_art_palettes_keep_the_named_file() {
 }
 
 #[test]
-fn presentation_only_anims_change_nothing_but_their_picture_down_their_chain() {
+fn presentation_anims_change_at_most_their_marks_down_their_chain() {
     let mut art = ArtRegistry::from_ini(&IniFile::from_str(
         "[GUNFIRE]\nRate=900\n[EXPLOSML]\nScorch=yes\nCrater=yes\n\
          [PUFF]\nRate=1\n[PUFF2]\nRate=1\n[SMOKE]\nRate=1\n[SPARK]\nRandomRate=2,4\n",
@@ -1709,18 +1709,25 @@ fn presentation_only_anims_change_nothing_but_their_picture_down_their_chain() {
     refer("PUFF", "PUFF2", "");
     refer("PUFF2", "PUFF", "");
     refer("SMOKE", "", "EXPLOSML");
-    assert!(art.anim_presentation_only("gunfire"), "a plain flash");
-    assert!(art.anim_presentation_only("PUFF"), "a plain cycle of Next=");
-    assert!(
-        !art.anim_presentation_only("EXPLOSML"),
-        "Scorch/Crater mark the map"
+    assert_eq!(
+        art.anim_picture("gunfire"),
+        Some(AnimPicture::Plain),
+        "a plain flash"
     );
-    assert!(
-        !art.anim_presentation_only("SMOKE"),
-        "its trailer marks the map"
+    assert_eq!(
+        art.anim_picture("PUFF"),
+        Some(AnimPicture::Plain),
+        "a cycle of Next="
     );
-    assert!(
-        !art.anim_presentation_only("SPARK"),
+    assert_eq!(
+        art.anim_picture("EXPLOSML"),
+        Some(AnimPicture::Marks),
+        "it marks the map"
+    );
+    assert_eq!(art.anim_picture("SMOKE"), None, "its trailer marks the map");
+    assert_eq!(
+        art.anim_picture("SPARK"),
+        None,
         "RandomRate draws the Scenario stream"
     );
 }

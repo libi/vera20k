@@ -456,6 +456,7 @@ impl Simulation {
                 // and passengers board in their class PerCellProcess.
             }
             FrameStep::LocalAnims => {
+                self.place_queued_anim_marks(rules, overlay_registry);
                 for id in self.substrate.anims.local_ids() {
                     // No expiry reaches a presentation anim, which nothing
                     // lists: it ends with its owner's UnInit instead

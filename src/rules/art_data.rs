@@ -283,6 +283,16 @@ pub struct BuildingAnimVariantConfig {
     pub ping_pong: bool,
 }
 
+/// What a presentation anim changes besides its picture
+/// ([`ArtRegistry::anim_picture`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnimPicture {
+    /// Nothing.
+    Plain,
+    /// The ground marks of its Middle (`Scorch=`/`Crater=`).
+    Marks,
+}
+
 /// Native-like metadata used by app-side `AnimClass` runtime slices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnimTypeRuntimeConfig {
@@ -1561,25 +1571,36 @@ impl ArtRegistry {
         with_ascii_uppercase(image_id, |key| self.anim_runtime_configs.get(key))
     }
 
-    /// Whether an anim of type `image_id` changes nothing but its own picture,
-    /// so it may run as a presentation anim
-    /// (`sim::anim_class::AnimConstructorInput::Presentation`). VERA-only.
+    /// What an anim of type `image_id` changes besides its own picture, when
+    /// little enough that it may run as a presentation anim
+    /// (`sim::anim_class::AnimConstructorInput::Presentation`); `None` when it
+    /// must stay an ordinary anim. VERA-only.
     ///
-    /// Such a type reads none of the keys whose AnimClass effects reach the
-    /// simulation: `Damage=` and Ares `Damage.Delay`/`Weapon=`, `Warhead=`,
-    /// `Spawns=`, `SpawnsParticle=`, `MakeInfantry=` and Phobos `CreateUnit=`,
-    /// `Scorch=`/`Crater=`, `Bouncer=`, `IsMeteor=`, the tiberium and vein
-    /// keys, `HideIfNoOre=`, `Flamer=`, `Sticky=`, `PsiWarning=` and the flaming
-    /// guy; nor `RandomRate=` or `RandomLoopDelay=`, whose draws take the
-    /// Scenario stream. Every anim it can become or make (`Next=`,
-    /// `TrailerAnim=`, `ExpireAnim=`, `BounceAnim=`) must be one too. A type
-    /// whose ART body was never read keeps constructor state and is refused.
-    pub fn anim_presentation_only(&self, image_id: &str) -> bool {
+    /// [`AnimPicture::Plain`] reads none of the keys whose AnimClass effects
+    /// reach the simulation: `Damage=` and Ares `Damage.Delay`/`Weapon=`,
+    /// `Warhead=`, `Spawns=`, `SpawnsParticle=`, `MakeInfantry=` and Phobos
+    /// `CreateUnit=`, `Scorch=`/`Crater=`, `Bouncer=`, `IsMeteor=`, the
+    /// tiberium and vein keys, `HideIfNoOre=`, `Flamer=`, `Sticky=`,
+    /// `PsiWarning=` and the flaming guy; nor `RandomRate=` or
+    /// `RandomLoopDelay=`, whose draws take the Scenario stream.
+    /// [`AnimPicture::Marks`] differs only in `Scorch=`/`Crater=`, the marks
+    /// `AnimClass::Middle @ 0x00424F00` leaves, which its producer then places
+    /// itself. Every anim it can become or make (`Next=`, `TrailerAnim=`,
+    /// `ExpireAnim=`, `BounceAnim=`) must be `Plain`. A type whose ART body was
+    /// never read keeps constructor state and is refused.
+    pub fn anim_picture(&self, image_id: &str) -> Option<AnimPicture> {
+        let config = self.anim_runtime_config(image_id)?;
+        let marks = config.scorch || config.crater;
         let mut seen = Vec::new();
-        self.anim_presentation_only_from(image_id, &mut seen)
+        self.anim_plain_from(image_id, marks, &mut seen)
+            .then_some(if marks {
+                AnimPicture::Marks
+            } else {
+                AnimPicture::Plain
+            })
     }
 
-    fn anim_presentation_only_from(&self, image_id: &str, seen: &mut Vec<String>) -> bool {
+    fn anim_plain_from(&self, image_id: &str, marks_allowed: bool, seen: &mut Vec<String>) -> bool {
         let key = image_id.to_ascii_uppercase();
         if seen.contains(&key) {
             return true;
@@ -1603,8 +1624,7 @@ impl ArtRegistry {
             || config.spawns_particle.is_some()
             || config.make_infantry != -1
             || creates_unit
-            || config.scorch
-            || config.crater
+            || (!marks_allowed && (config.scorch || config.crater))
             || config.bouncer
             || config.is_meteor
             || config.is_tiberium
@@ -1631,7 +1651,7 @@ impl ArtRegistry {
         children
             .into_iter()
             .flatten()
-            .all(|child| self.anim_presentation_only_from(&child, seen))
+            .all(|child| self.anim_plain_from(&child, false, seen))
     }
 
     /// Apply the canonical RulesClass processing receipt before asset binding.

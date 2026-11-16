@@ -291,7 +291,7 @@ pub(crate) fn admit_muzzle_anim(world: &mut Simulation, rules: &RuleSet, event: 
             type_name, rx, ry, sub_x, sub_y, level,
         )
     };
-    let constructor = world.effect_anim_constructor(rules, type_name);
+    let (constructor, _) = world.effect_anim_constructor(rules, type_name, false);
     if let Err(error) = world.spawn_anim_at_world_with_constructor(
         rules,
         descriptor,

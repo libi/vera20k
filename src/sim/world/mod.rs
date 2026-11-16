@@ -1661,6 +1661,10 @@ pub struct Simulation {
     /// Derived from the listener stores; never serialized or hashed.
     #[serde(skip)]
     expiry_listeners: expiry_listeners::ExpiryListeners,
+    /// The marks presentation explosions queued for the next local anim step
+    /// (`Simulation::place_queued_anim_marks`). Saved, never hashed.
+    #[serde(default)]
+    pub(crate) queued_anim_marks: Vec<crate::sim::anim_class::QueuedAnimMarks>,
     /// Batched path searches (`movement::path_batch`); `None`
     /// searches in native order. Its registrations wait across a save.
     pub(crate) path_batch: Option<crate::sim::movement::path_batch::PathBatch>,
@@ -4691,6 +4695,7 @@ impl Simulation {
             reveal_viewers: Default::default(),
             civilian_house_memo: Default::default(),
             expiry_listeners: Default::default(),
+            queued_anim_marks: Vec::new(),
             path_batch: None,
             idle_sleep: Default::default(),
             scan_batch: None,
