@@ -246,6 +246,7 @@ impl Scene {
                 lighting: light,
                 house_colors: colors,
                 building_zshape: false,
+                model_frame: None,
             },
             &mut parents,
             &order,

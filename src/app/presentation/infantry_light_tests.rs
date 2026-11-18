@@ -197,6 +197,7 @@ fn assert_shp_light(
             lighting: light,
             house_colors: &colors,
             building_zshape: false,
+            model_frame: None,
         },
         &mut draws,
         &NativeDisplayOrder::from_world(&sim, None),

@@ -149,6 +149,7 @@ fn retail_rushhr_roof_below_viewport_keeps_its_visible_body() {
             lighting: &lighting,
             house_colors: &colors,
             building_zshape: true,
+            model_frame: None,
         },
         &mut parents,
         &order,

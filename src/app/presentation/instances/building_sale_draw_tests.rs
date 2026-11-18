@@ -225,6 +225,7 @@ fn gate_piece(
         lighting: &lighting,
         house_colors: colors,
         building_zshape: true,
+        model_frame: None,
     };
     let order = NativeDisplayOrder::from_world(&runtime.simulation, None);
     let mut planned = Vec::new();
