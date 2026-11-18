@@ -52,8 +52,10 @@ nothing), as a missing SHP or VXL does today. A file that is missing, cannot
 be read or cannot be drawn is told the same way. The match shows these once,
 when it has loaded: the first three, then how many more the log file lists.
 
-For a building, `Buildup=` and `BibShape=` name pictures (`NAME.png`) when the
-building's section declares `Picture=`; they take its `PictureSize=`.
+For a building, `Buildup=`, `BibShape=` and a war factory's `DeployingAnim=`,
+`RoofDeployingAnim=`, `UnderDoorAnim=` and `UnderRoofDoorAnim=` (SHP names
+there, not AnimTypes) name pictures (`NAME.png`) when the building's section
+declares `Picture=`; they take its `PictureSize=`.
 
 ## Files
 
@@ -200,12 +202,20 @@ an APNG with an SHP's frame count gives an AnimType the same End, LoopEnd and
 Middle as that SHP; a building with a Buildup picture can be sold. Then one
 production run on a real map with converted art.
 
+## Known residuals
+
+- BibShape and factory door art are atlas files shared by name. When a
+  building that declares `Picture=` and one that does not name the same file,
+  both draw it from the picture. Retail data declares no picture, so this needs
+  a mod that mixes both on one name.
+
 ## Status
 
 - Design: this file.
 - Chain 1: in progress.
 - Chains 2 and 3, drawing: the sprite atlas draws building bodies, Buildup,
-  BibShape and building anims, infantry and SHP vehicle bodies, and
-  projectiles from declared pictures, with their frame counts and building
-  render bounds taken from the pictures; not yet compiled.
+  BibShape, factory door art and building anims, infantry and SHP vehicle
+  bodies, and projectiles from declared pictures, with their frame counts and building
+  render bounds taken from the pictures; the Phobos placement preview draws a
+  picture building's Buildup or body picture; not yet compiled.
 - Chain 6: picture art drawn (`render::picture_zoom`), written but not yet compiled or run; models follow with chain 4.
