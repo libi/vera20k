@@ -1467,6 +1467,7 @@ impl App {
                 shell_surface_presenter,
                 upscale_pass: None,
                 world_zoom_pass: None,
+                picture_zoom: None,
                 sidebar_surface: None,
                 in_game_shell_surface: None,
                 status_screen_fill,
