@@ -170,6 +170,10 @@ against this list.
   per frame and keeps the world zoom pass when the Options zoom alone
   magnifies picture art; `draw_passes` draws it after the frame composite and
   after the window copy; `SpriteAtlas` holds the HD twin pages.
+- The overlay and bridge atlases: a building whose rubble art names a
+  declared picture takes its rubble body and shadow frames from the picture
+  (`picture_atlas::rubble_picture`). Those atlases are already RGBA pages
+  with an index plane, so the frames share their page and draw path.
 
 ## Verification
 
