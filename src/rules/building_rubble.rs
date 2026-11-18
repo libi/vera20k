@@ -44,6 +44,11 @@ pub struct RubbleArt {
     pub body_frame: u16,
     /// Physical frame selected by BuildingType45F1D0 for this own image.
     pub shadow_frame: u16,
+    /// VERA-only (docs/picture-model-art.md): the body art's `Picture=`
+    /// declaration when `shp` names its picture, which the renderers draw
+    /// at its `PictureSize=`; None for an SHP. Presentation only, so the
+    /// hash below leaves it out.
+    pub picture: Option<crate::rules::art_data::PictureDecl>,
 }
 
 // Rules' simulation-config hash already includes this catalog because its
@@ -89,7 +94,7 @@ impl RubbleAssetCatalog {
             .all_objects()
             .filter(|object| object.category == ObjectCategory::Building && object.leave_rubble)
         {
-            let (shp, raw) = if let Some((section, decl)) = rules
+            let (shp, raw, picture) = if let Some((section, decl)) = rules
                 .art()
                 .resolve_declared_picture(&object.id, &object.image)
             {
@@ -103,7 +108,11 @@ impl RubbleAssetCatalog {
                 else {
                     continue;
                 };
-                (facts.file, i16::try_from(facts.frames).unwrap_or(i16::MAX))
+                (
+                    facts.file,
+                    i16::try_from(facts.frames).unwrap_or(i16::MAX),
+                    Some(decl.clone()),
+                )
             } else {
                 let image = rules
                     .art()
@@ -128,7 +137,7 @@ impl RubbleAssetCatalog {
                 else {
                     continue;
                 };
-                (shp, raw)
+                (shp, raw, None)
             };
             let Some(body_frame) = rubble_body_frame(raw) else {
                 continue;
@@ -139,6 +148,7 @@ impl RubbleAssetCatalog {
                     shp,
                     body_frame,
                     shadow_frame: rubble_shadow_frame(raw).expect("same own-image admission"),
+                    picture,
                 },
             );
         }
@@ -224,6 +234,7 @@ mod tests {
                 shp: "CGWASH01.SHP".into(),
                 body_frame: RUBBLE_BODY_FRAME,
                 shadow_frame: 7,
+                picture: None,
             })
         );
         assert!(catalog.art("GAPOWR").is_none());
@@ -263,6 +274,10 @@ mod tests {
                 shp: "one.png".into(),
                 body_frame: RUBBLE_BODY_FRAME,
                 shadow_frame: 7,
+                picture: Some(crate::rules::art_data::PictureDecl {
+                    file: "one.png".into(),
+                    size: None,
+                }),
             })
         );
         assert!(
@@ -281,6 +296,7 @@ mod tests {
             shp: "RUIN.SHP".into(),
             body_frame: 3,
             shadow_frame: 7,
+            picture: None,
         };
         rules.set_building_rubble_art_for_test("RUIN", art.clone());
         let baseline = rules.simulation_config_hash();
