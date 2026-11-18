@@ -56,6 +56,9 @@ pub(crate) struct RendererState {
     /// (`render::unit_pose_cache`).
     pub(crate) vxl_pose_frame_cache:
         std::cell::RefCell<crate::render::unit_pose_cache::VxlPoseFrameCache>,
+    /// VERA-only, experimental: this frame's declared models
+    /// (`render::model_draw`), untouched while no type declares one.
+    pub(crate) model_frame: std::cell::RefCell<crate::render::model_draw::ModelFrame>,
     /// Previous presented pre-cursor composition, retained for input-time
     /// screenshot parity.
     pub(crate) retail_screenshot_frame_cache: crate::render::screenshot::PresentedFrameCache,

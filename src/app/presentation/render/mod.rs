@@ -322,6 +322,8 @@ pub(crate) fn render_game(
             )
         })
     });
+    // VERA-only, experimental: the page declared models draw on this frame.
+    crate::app::presentation::instances::begin_model_frame(state);
     let mut world =
         build_instances::build_world_instances(state, vsw, vsh, bracket_palette, &cursor_targets);
     for layer in &mut world.object_layers {

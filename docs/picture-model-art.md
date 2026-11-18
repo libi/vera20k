@@ -47,10 +47,18 @@ numbers, so `Start=`, `End=`, `LoopStart=`, `Shadow=`, `Sequence=`,
 | `ModelSize=L` | the length of the model's `body` node along its forward axis, in its rest pose, in leptons (256 per cell); the whole model scales by the same factor | required with `Model=` |
 
 A value out of range is refused with an in-game message naming the section and
-key; a refused `Picture=` or `Model=` leaves the section with no art (it draws
-nothing), as a missing SHP or VXL does today. A file that is missing, cannot
-be read or cannot be drawn is told the same way. The match shows these once,
-when it has loaded: the first three, then how many more the log file lists.
+key; a refused `Picture=` leaves the section with no art (it draws nothing), as
+a missing SHP does today. `Model=` without a valid `ModelSize=` (1 to 1536,
+six cells) is refused and the section keeps its VXL path; a declared model
+that is missing or unreadable, or lacks a `body` node, draws nothing and its
+VXL and HVA are never opened, as a missing VXL does today. A file that is
+missing, cannot be read or cannot be drawn is told in the game too: the match
+shows these once, when it has loaded, the first three, then how many more the
+log file lists.
+
+`Model=` takes effect for a type that loads a voxel model, that is whose art
+section also says `Voxel=yes`; the section is the one the VXL would be read
+through (the rules `Image=`, else the type's own name).
 
 For a building, `Buildup=`, `BibShape=` and a war factory's `DeployingAnim=`,
 `RoofDeployingAnim=`, `UnderDoorAnim=` and `UnderRoofDoorAnim=` (SHP names
@@ -108,6 +116,16 @@ simulation reads art.
 | Voxel model loaded (rocking, rockers) | `VoxelAssetCatalog::bind` (`6F9E10`) | `Model=` declared and the file loaded |
 | Tilt half sizes (slope tilt, fire coordinates) | `voxel_asset_catalog::voxel_tilt_half_sizes` (`6F3B6C`) | `body` bounds scaled by `ModelSize` |
 
+The tilt half sizes take the VXL section sizes the model stands in for:
+`size_x = round(ModelSize * u)` voxels along the body's glTF +Z and
+`size_y = round(width / length * ModelSize * u)` across its X, `u` being the
+native model units per lepton (`0x00B1D008`, about 0.16573), each held to 1..255;
+then `[size_y / 2 + 0.5, size_x / 2]` as for a VXL
+(`voxel_asset_catalog::model_tilt_half_sizes`). A unit with indexed guns
+(`TurretCount=`) needs a `turretN` node for each of them, as it needs each
+`TURN.VXL` (`5F865F`, `5F8ACB`). The config hash takes the model's file name,
+`ModelSize=` and a digest of its bytes.
+
 A declared file that is missing on one machine changes these values there, as a
 missing SHP does today; the config hash refuses that machine online and in
 saves and replays.
@@ -131,7 +149,29 @@ so it sorts, shades and shadows by the same rules:
   frame's: native Z from the drawn rectangle, Display order, `Shadow=` frames,
   darkening counts and translucency all follow without new code.
 - **Models** are drawn by the GPU every frame from their meshes into transient
-  RGBA images placed the way a voxel image is (chain 4 settles the details).
+  RGBA images placed the way a voxel image is (`render::model_draw`). Each
+  object that draws one asks for its pose while the frame's pieces are built;
+  equal poses share an image. One render pass then draws the body, turret and
+  barrel meshes of every asked pose, composited into one image as `UnitClass`
+  composites its parts (`0x0073B140`), at the matrices the voxel parts would
+  take (`ground_unit_pose_matrices`, or the posed body's locomotor arm), in
+  the rectangle a voxel draw of that pose takes
+  (`native_draw_bounds_from_extents`), onto one RGBA page of the sprite
+  atlas held for the purpose. Light is the voxel world light with the
+  Blinn-Phong form of `vxl_normals`; the mask's red takes the owner's ramp by
+  brightness as a picture's does; the mask's green and emissive texels are
+  unlit (index 240). The unit's piece draws that page through the SHP
+  blitters' RGBA source mode with the unit's Z-read policy, its Z from the
+  drawn rectangle (`ZGradient::Vertical`). Nothing of a pose is kept between
+  frames; only each model's meshes and textures stay on the GPU. The page
+  starts at 1024 square and doubles after a frame whose images did not fit.
+- **Model space.** glTF +Y is up, +Z forward, +X left. The model draws with
+  +Z along the voxel hull's X, X along its Y and +Y along its Z, scaled so
+  the `body` length is `ModelSize=` leptons in voxel units (one voxel is one
+  screen pixel). The origin is the point the object stands on. A turret turns
+  about the vertical through the origin moved forward by `TurretOffset=`, and
+  a barrel pitches about the turret's pivot, as `TUR.VXL` and `BARL.VXL` do,
+  so turret and barrel meshes are placed as those files place their voxels.
 - **Hooks.** The atlas does not register SHP keys for a type that declares
   `Picture=`; it appends the picture pages and entries instead
   (`render::picture_atlas`). No shader, pipeline, bind group layout or draw
@@ -178,6 +218,15 @@ against this list.
   declared picture takes its rubble body and shadow frames from the picture
   (`picture_atlas::rubble_picture`). Those atlases are already RGBA pages
   with an index plane, so the frames share their page and draw path.
+- Models: `VoxelAssetCatalog::bind` admits declared models and leaves their
+  VXL/HVA requests unopened (`VoxelModelPlan::slot_requests`); the sprite
+  atlas holds one model page (`install_model_page`); `BatchRenderer` makes
+  its render targets; the unit draw (`instances::units`) hands a type with a
+  declared model to `instances::model_units` in place of its VXL parts and
+  shadows; `render_game` begins and `dispatch_draw_passes` encodes the
+  frame's models (`RendererState::model_frame`). `vxl_raster` exposes the body
+  draw matrix and `vxl_normals` the world light; the native model units per
+  lepton moved to `map::voxel_pose`.
 
 ## Verification
 
@@ -219,3 +268,10 @@ production run on a real map with converted art.
   render bounds taken from the pictures; the Phobos placement preview draws a
   picture building's Buildup or body picture; not yet compiled.
 - Chain 6: picture art drawn (`render::picture_zoom`), written but not yet compiled or run; models follow with chain 4.
+- Chains 4 and 5 (`Model=`), written, not yet compiled or run: keys and the
+  model-loaded and tilt facts in the core crate; the GPU draw of voxel units'
+  and aircraft's bodies, turrets and barrels. Not yet: model shadows (the
+  `shadow` node or body bounds), node animations (the rest pose draws),
+  normal maps (`NAME.normals.png`), the bridge split of a model's depth
+  rectangle, voxel building turrets, voxel projectiles and debris (their VXL
+  path stays), and the `NoSpawnAlt` `WO` model.
