@@ -50,8 +50,10 @@ A value out of range is refused with an in-game message naming the section and
 key; a refused `Picture=` or `Model=` leaves the section with no art (it draws
 nothing), as a missing SHP or VXL does today.
 
-For a building, `Buildup=` and `BibShape=` name pictures (`NAME.png`) when the
-building's section declares `Picture=`; they take its `PictureSize=`.
+For a building, `Buildup=`, `BibShape=` and a war factory's `DeployingAnim=`,
+`RoofDeployingAnim=`, `UnderDoorAnim=` and `UnderRoofDoorAnim=` (SHP names
+there, not AnimTypes) name pictures (`NAME.png`) when the building's section
+declares `Picture=`; they take its `PictureSize=`.
 
 ## Files
 
@@ -196,6 +198,7 @@ production run on a real map with converted art.
 - Design: this file.
 - Chain 1: in progress.
 - Chains 2 and 3, drawing: the sprite atlas draws building bodies, Buildup,
-  BibShape and building anims, infantry and SHP vehicle bodies, and
-  projectiles from declared pictures, with their frame counts and building
-  render bounds taken from the pictures; not yet compiled.
+  BibShape, factory door art and building anims, infantry and SHP vehicle
+  bodies, and projectiles from declared pictures, with their frame counts and building
+  render bounds taken from the pictures; the Phobos placement preview draws a
+  picture building's Buildup or body picture; not yet compiled.
