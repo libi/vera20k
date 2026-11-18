@@ -58,6 +58,7 @@ pub mod native_z;
 pub mod overlay_assets;
 pub mod overlay_atlas;
 pub mod palette_light;
+pub(crate) mod picture_atlas;
 pub mod palette_textures;
 pub mod pixel_fx_sparkles;
 pub mod radar;
