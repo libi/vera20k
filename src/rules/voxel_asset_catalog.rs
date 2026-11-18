@@ -141,6 +141,27 @@ pub struct DeclaredModel {
     digest: u64,
 }
 
+impl DeclaredModel {
+    /// A declared model of `ModelSize=size` for tests of its drawing.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test(model: Arc<crate::assets::model_file::Model>, size: i32) -> Self {
+        let half_sizes = model
+            .body_bounds()
+            .and_then(|bounds| model_tilt_half_sizes(bounds, size))
+            .unwrap_or_default();
+        Self {
+            section: "TEST".into(),
+            decl: crate::rules::art_data::ModelDecl {
+                file: "test.glb".into(),
+                size,
+            },
+            model,
+            half_sizes,
+            digest: 0,
+        }
+    }
+}
+
 fn fnv1a64(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
@@ -308,6 +329,9 @@ pub(crate) struct VoxelAssetCatalog {
     by_handle: Vec<bool>,
     models: BTreeMap<(ObjectCategory, String), LoadedVoxelModel>,
     voxel_anims: Vec<Option<VoxelPart>>,
+    /// Whether any type draws an admitted declared model, so the renderer
+    /// skips its model work outright when none does. Derived from `models`.
+    declared_models: bool,
 }
 impl PartialEq for VoxelAssetCatalog {
     fn eq(&self, other: &Self) -> bool {
@@ -476,16 +500,23 @@ impl VoxelAssetCatalog {
             .voxel_anim_types_iter()
             .map(|kind| part(kind.model_slots.main, &plan, &libraries))
             .collect();
+        let declared_models = models
+            .values()
+            .any(|model| model.declared_model().is_some());
         Self {
             bound: true,
             loaded,
             by_handle,
             models,
             voxel_anims,
+            declared_models,
         }
     }
     pub(crate) fn is_bound(&self) -> bool {
         self.bound
+    }
+    pub(crate) fn declares_models(&self) -> bool {
+        self.declared_models
     }
     pub(crate) fn model(&self, category: ObjectCategory, name: &str) -> Option<&LoadedVoxelModel> {
         self.models.get(&(category, name.to_ascii_uppercase()))

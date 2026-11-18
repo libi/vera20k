@@ -11705,6 +11705,13 @@ impl RuleSet {
         self.voxel_assets.is_bound()
     }
 
+    /// VERA-only, experimental (`docs/picture-model-art.md`): whether any
+    /// type draws an admitted `Model=` ([`crate::rules::voxel_asset_catalog::LoadedVoxelModel::declared_model`]).
+    /// False for retail data, so the renderer does no model work.
+    pub fn declares_models(&self) -> bool {
+        self.voxel_assets.declares_models()
+    }
+
     /// Techno6F9E10's loaded-main-VXL predicate for the type `object` names,
     /// never an ART declaration or renderer-cache query. Unbound/missing/
     /// malformed models answer false.
