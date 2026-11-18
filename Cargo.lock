@@ -3293,6 +3293,7 @@ dependencies = [
  "memmap2",
  "num-bigint",
  "num-traits",
+ "png",
  "rayon",
  "serde",
  "serde_json",

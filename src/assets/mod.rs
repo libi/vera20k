@@ -40,6 +40,7 @@ pub mod mix_crypto;
 pub mod mix_hash;
 pub mod pal_file;
 pub mod pcx_file;
+pub mod picture_file;
 pub mod shp_decode;
 pub mod shp_file;
 pub mod tmp_decode;
