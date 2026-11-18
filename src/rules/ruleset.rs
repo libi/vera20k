@@ -427,6 +427,13 @@ pub struct SideScoreArt<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SideIdx(pub u8);
 
+/// VERA's bound on `[AI] AIBaseSpacing=`'s magnitude. The base reservation
+/// (`0x00455F10`), its neighbour repair (`0x004561F0`, foundation plus five
+/// spacings) and the AI site search (`0x0050B760`) walk cell rectangles
+/// grown by it, so a value near either end of `i32` walks about 2^31 by 2^31
+/// cells and freezes the match; retail spaces bases by 1.
+pub const AI_BASE_SPACING_LIMIT: i32 = 16;
+
 /// Registry section names in rules.ini and their corresponding category.
 const TYPE_REGISTRIES: &[(&str, ObjectCategory)] = &[
     ("InfantryTypes", ObjectCategory::Infantry),
@@ -4928,7 +4935,8 @@ pub struct RuleSet {
     /// without clamping. Ordered rule passes use the shared typed projection.
     /// Executed reader controls: tools/spatial_oracle/trigger_action_values.
     reveal_trigger_radius: i32,
-    /// Signed, unclamped `[AI] AIBaseSpacing`; constructor default is 1.
+    /// Signed `[AI] AIBaseSpacing`; constructor default is 1. Its magnitude
+    /// is at most [`AI_BASE_SPACING_LIMIT`].
     pub ai_base_spacing: i32,
     /// Source-ordered `[General] Shipyard=` BuildingType identities.
     pub shipyard_types: Vec<String>,
@@ -5292,6 +5300,12 @@ impl RuleSet {
         self.ares_global_controls.general().enemy_wrench()
     }
 
+    /// RulesExt `[General] EnemyInsignia` (constructor true): a player not
+    /// allied with an object's owner sees its rank insignia.
+    pub fn ares_enemy_insignia(&self) -> bool {
+        self.ares_global_controls.general().enemy_insignia()
+    }
+
     /// RulesExt `[CrateRules] RandomCrateMoney` (constructor 900).
     pub(crate) fn ares_random_crate_money(&self) -> i32 {
         self.ares_global_controls.random_crate_money()
@@ -5522,6 +5536,15 @@ impl RuleSet {
                 .find(|object| object.category == category && object.id == name)
             {
                 object.phobos_insignia = insignia.clone();
+            }
+        }
+        for (category, name, insignia) in processed.techno_ares_insignia_states() {
+            if let Some(object) = rules
+                .object_list
+                .iter_mut()
+                .find(|object| object.category == category && object.id == name)
+            {
+                object.ares_insignia = insignia.clone();
             }
         }
         rules.crate_rules = processed.crate_rules().clone();
@@ -6197,12 +6220,6 @@ impl RuleSet {
             }
         }
         if crate::rules::ares_switch::ares_way() {
-            rules.ares_super_weapon_metadata.clear();
-            for (name, metadata) in processed.super_weapon_availability_states() {
-                rules
-                    .ares_super_weapon_metadata
-                    .insert(name.to_ascii_uppercase(), metadata);
-            }
             for (name, presentation) in processed.super_weapon_presentation_states() {
                 if let Some(sw) = rules
                     .super_weapons
@@ -6842,7 +6859,12 @@ impl RuleSet {
         general.iron_curtain_color = color_indexes.iron_curtain_color();
         general.berserk_color = color_indexes.berserk_color();
         general.force_shield_color = color_indexes.force_shield_color();
-        let ai_base_spacing = ini.section_or_empty("AI").read_int("AIBaseSpacing", 1);
+        // `RulesClass::ReadAI`'s ReadInt (`0x00673D7E`, Rules+0x1460), within
+        // VERA's bound.
+        let ai_base_spacing = ini
+            .section_or_empty("AI")
+            .read_int("AIBaseSpacing", 1)
+            .clamp(-AI_BASE_SPACING_LIMIT, AI_BASE_SPACING_LIMIT);
         // `DifficultyClass::ReadINI_IntVector @ 0x00475D70`, reached by
         // `RulesClass::ReadGeneral` for AISlaveMinerNumber
         // `0x00670585..0x006705B7`, AIExtraRefineries `0x006705F9..0x0067062A`
@@ -7165,12 +7187,27 @@ impl RuleSet {
         log::info!("Factory map: {} entries", factory_map.len());
 
         // Step 6: Parse superweapon type registry.
+        let ares_super_weapon_metadata: BTreeMap<_, _> = if crate::rules::ares_switch::ares_way() {
+            processed
+                .super_weapon_availability_states()
+                .map(|(name, metadata)| (name.to_ascii_uppercase(), metadata))
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
         let mut super_weapons: HashMap<String, SuperWeaponType> = HashMap::new();
         let sw_ids: Vec<String> = parse_registry(ini, "SuperWeaponTypes");
         let super_weapon_order: Vec<String> = sw_ids.clone();
         for sw_id in &sw_ids {
             if let Some(section) = ini.section(sw_id) {
-                let sw = SuperWeaponType::from_ini_section(sw_id, section);
+                let sw = SuperWeaponType::from_ini_section_with_range(
+                    sw_id,
+                    section,
+                    ares_super_weapon_metadata
+                        .get(&sw_id.to_ascii_uppercase())
+                        .map(|ext| ext.launch().range()),
+                    general.psychic_reveal_radius,
+                );
                 super_weapons.insert(sw_id.clone(), sw);
             } else {
                 log::trace!(
@@ -7384,7 +7421,7 @@ impl RuleSet {
                 .ares_super_weapon_cursor_states()
                 .map(|(name, cursors)| (name.to_ascii_uppercase(), cursors))
                 .collect(),
-            ares_super_weapon_metadata: BTreeMap::new(),
+            ares_super_weapon_metadata,
             #[cfg(feature = "phobos")]
             phobos_super_weapon_metadata: BTreeMap::new(),
             parallel_ai_queues:
@@ -16393,6 +16430,45 @@ Projectile=Invisible
         let piece = rules.voxel_anim_type(rules.voxel_anim_type_id_by_name("PIECE").unwrap());
         let default = crate::rules::voxel_anim_type::VoxelAnimType::with_defaults("PIECE");
         assert_eq!(piece.min_angular_velocity, default.min_angular_velocity);
+    }
+
+    #[test]
+    fn a_huge_debris_count_stops_at_the_debris_bound() {
+        let rules = RuleSet::from_ini(&IniFile::from_str(
+            "[VehicleTypes]\n0=TANK\n[TANK]\nMaxDebris=2147483647\nMinDebris=2147483647\n\
+             [Warheads]\n0=WH\n[WH]\nMaxDebris=2147483647\n",
+        ))
+        .unwrap();
+        let limit = crate::rules::object_type::DEBRIS_LIMIT;
+        let tank = rules.object("TANK").unwrap();
+        assert_eq!((tank.min_debris, tank.max_debris), (limit, limit));
+        assert_eq!(rules.warhead("WH").unwrap().max_debris, limit);
+    }
+
+    #[test]
+    fn a_huge_ai_base_spacing_stops_at_the_spacing_bound() {
+        let spacing = |value: &str| {
+            let rules = RuleSet::from_ini(&IniFile::from_str(&format!(
+                "[AI]\nAIBaseSpacing={value}\n[BuildingTypes]\n0=PLAIN\n[PLAIN]\nName=Plain\n"
+            )))
+            .unwrap();
+            let plain = rules.object("PLAIN").unwrap().base_reservation_spacing;
+            (rules.ai_base_spacing, plain)
+        };
+        let limit = AI_BASE_SPACING_LIMIT;
+        assert_eq!(spacing("2147483647"), (limit, Some(limit)));
+        assert_eq!(spacing("-2147483647"), (-limit, Some(-limit)));
+    }
+
+    #[test]
+    fn a_huge_spawn_count_stops_at_the_spawn_bound() {
+        let rules = RuleSet::from_ini(&IniFile::from_str(
+            "[AircraftTypes]\n0=HORNET\n[VehicleTypes]\n0=CARRIER\n\
+             [HORNET]\nStrength=100\n[CARRIER]\nSpawns=HORNET\nSpawnsNumber=2147483647\n",
+        ))
+        .unwrap();
+        let limit = crate::rules::object_type::SPAWNS_NUMBER_LIMIT;
+        assert_eq!(rules.object("CARRIER").unwrap().spawns_number, limit);
     }
 
     #[test]
