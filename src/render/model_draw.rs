@@ -4,7 +4,8 @@
 //! While the frame's pieces are built, each object that draws a declared
 //! model asks for its pose ([`ModelFrame::request`]); equal poses share one
 //! image. Before the world draws, one render pass draws every asked pose's
-//! body, turret and barrel meshes into the sprite atlas's model page
+//! body, turret and barrel meshes, or a building's guns or one mesh node
+//! ([`ModelFrame::request_nodes`]), into the sprite atlas's model page
 //! ([`SpriteAtlas::install_model_page`]), each image in the rectangle a voxel
 //! draw of the same pose takes ([`native_draw_bounds_from_extents`]). The
 //! page is RGBA, lit with the voxel world light, with a palette-index plane
@@ -111,6 +112,24 @@ pub(crate) struct ModelShadow {
     /// `ConsideredAircraft=`: the viewer is halved (`0x00707319`).
     pub considered_aircraft: bool,
 }
+
+/// VERA-only, experimental (`docs/picture-model-art.md`): which nodes a
+/// pose draws, and at which of its three matrices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum ModelNodes {
+    /// A voxel unit: `body` at matrix 0 and, with the pose's gun, its
+    /// `turretN` at 1 and `barrelN` at 2. A projectile draws the body alone.
+    Unit,
+    /// A building's voxel guns (Building draw `43DA80`): `body` as the B8
+    /// turret at matrix 1 when the building has one, and `barrel` as the C0
+    /// barrel at matrix 2.
+    BuildingGuns { turret: bool },
+    /// The mesh node at this position among the model's nodes with a mesh,
+    /// in file order, at matrix 0: a debris piece's `VoxelIndex=`, as
+    /// VoxelAnim draw `749DCE` draws one VXL section. Its own meshes only.
+    MeshNode(usize),
+}
+
 /// Where a pose's image is this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ModelImage {
@@ -131,6 +150,7 @@ enum PoseKey {
         gun: Option<u32>,
         ramp: Option<[[u8; 3]; 16]>,
         frames: [u32; 2],
+        nodes: ModelNodes,
     },
     Shadow {
         model: usize,
@@ -148,11 +168,11 @@ struct PartNode {
     local: Option<ModelBounds>,
 }
 
-/// One part's nodes, rest bounds and clip.
+/// One part's nodes, rest bounds and clip, or one mesh node's
+/// ([`ModelNodes::MeshNode`]).
 struct PartLayout {
-    part: ModelPart,
     nodes: Vec<PartNode>,
-    /// The part's rest bounds in model space ([`Model::part_bounds`]).
+    /// The rest bounds in model space ([`Model::part_bounds`]).
     bounds: Option<ModelBounds>,
     /// The animation the part's HVA frames select ([`Model::part_clip`]).
     clip: Option<usize>,
@@ -184,7 +204,10 @@ impl PartLayout {
 struct Layout {
     /// glTF model space to voxel space.
     to_voxels: Mat4,
-    parts: Vec<PartLayout>,
+    parts: Vec<(ModelPart, PartLayout)>,
+    /// Every node with a mesh, in file order, alone at rest with the rest
+    /// bounds of its own meshes and no clip ([`ModelNodes::MeshNode`]).
+    mesh_nodes: Vec<PartLayout>,
 }
 
 impl Layout {
@@ -214,32 +237,77 @@ impl Layout {
             .filter_map(|(index, node)| {
                 let part = node.name.as_deref().and_then(ModelPart::from_name)?;
                 // The first node naming a part is the part (`Model::part`).
-                (model.part(part) == Some(index)).then(|| PartLayout {
-                    part,
-                    nodes: part_nodes(model, index),
-                    bounds: model.part_bounds(index),
-                    clip: model.part_clip(part),
+                (model.part(part) == Some(index)).then(|| {
+                    let layout = PartLayout {
+                        nodes: part_nodes(model, index),
+                        bounds: model.part_bounds(index),
+                        clip: model.part_clip(part),
+                    };
+                    (part, layout)
                 })
             })
             .collect();
-        Self { to_voxels, parts }
+        let mesh_nodes = model
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, node)| Some((index, node.mesh?)))
+            .map(|(index, mesh)| {
+                let rest = Mat4::from_cols_array(&model.rest_world_matrix(index));
+                PartLayout {
+                    nodes: vec![PartNode {
+                        node: index,
+                        rest,
+                        local: model.mesh_bounds(mesh),
+                    }],
+                    bounds: node_mesh_bounds(model, index, rest),
+                    clip: None,
+                }
+            })
+            .collect();
+        Self {
+            to_voxels,
+            parts,
+            mesh_nodes,
+        }
     }
 
     fn part(&self, part: ModelPart) -> Option<&PartLayout> {
-        self.parts.iter().find(|found| found.part == part)
+        self.parts
+            .iter()
+            .find(|(found, _)| *found == part)
+            .map(|(_, layout)| layout)
     }
 
-    /// The parts `gun` draws with, with the draw matrix index and the frame
-    /// index ([`ModelPose::frames`]) of each.
-    fn drawn(&self, gun: Option<u32>) -> impl Iterator<Item = (usize, &PartLayout, usize)> {
-        [
-            Some((0, ModelPart::Body, 0)),
-            gun.map(|gun| (1, ModelPart::Turret(gun), 1)),
-            gun.map(|gun| (2, ModelPart::Barrel(gun), 0)),
-        ]
-        .into_iter()
-        .flatten()
-        .filter_map(|(matrix, part, frame)| Some((matrix, self.part(part)?, frame)))
+    /// The parts `nodes` and `gun` draw with, with the draw matrix index and
+    /// the frame index ([`ModelPose::frames`]) of each.
+    fn drawn(
+        &self,
+        nodes: ModelNodes,
+        gun: Option<u32>,
+    ) -> impl Iterator<Item = (usize, &PartLayout, usize)> {
+        let parts = match nodes {
+            ModelNodes::Unit => [
+                Some((0, ModelPart::Body, 0)),
+                gun.map(|gun| (1, ModelPart::Turret(gun), 1)),
+                gun.map(|gun| (2, ModelPart::Barrel(gun), 0)),
+            ],
+            ModelNodes::BuildingGuns { turret } => [
+                turret.then_some((1, ModelPart::Body, 0)),
+                Some((2, ModelPart::Barrel(0), 0)),
+                None,
+            ],
+            ModelNodes::MeshNode(_) => [None; 3],
+        };
+        let mesh_node = match nodes {
+            ModelNodes::MeshNode(index) => self.mesh_nodes.get(index).map(|node| (0, node, 0)),
+            _ => None,
+        };
+        parts
+            .into_iter()
+            .flatten()
+            .filter_map(|(matrix, part, frame)| Some((matrix, self.part(part)?, frame)))
+            .chain(mesh_node)
     }
 
     /// The part a shadow is cast from: `shadow`, else `body`.
@@ -354,6 +422,31 @@ fn part_nodes(model: &Model, node: usize) -> Vec<PartNode> {
     nodes
 }
 
+/// The rest-pose bounds, in model space, of `node`'s own meshes, whose
+/// rest-pose model matrix is `world`; its children are left out.
+fn node_mesh_bounds(model: &Model, node: usize, world: Mat4) -> Option<ModelBounds> {
+    let mesh = model.meshes.get(model.nodes.get(node)?.mesh?)?;
+    let mut bounds: Option<ModelBounds> = None;
+    for position in mesh
+        .primitives
+        .iter()
+        .flat_map(|primitive| &primitive.positions)
+    {
+        let point = world
+            .transform_point3(Vec3::from_array(*position))
+            .to_array();
+        let next = bounds.get_or_insert(ModelBounds {
+            min: point,
+            max: point,
+        });
+        for axis in 0..3 {
+            next.min[axis] = next.min[axis].min(point[axis]);
+            next.max[axis] = next.max[axis].max(point[axis]);
+        }
+    }
+    bounds
+}
+
 /// A request placed on this frame's page.
 struct Placed {
     model: Arc<DeclaredModel>,
@@ -450,6 +543,16 @@ impl ModelFrame {
     /// the frame asks for it. None when the frame has no page, the pose draws
     /// nothing, or the page is full (the next frame's page is bigger).
     pub(crate) fn request(&mut self, pose: ModelPose) -> Option<ModelImage> {
+        self.request_nodes(pose, ModelNodes::Unit)
+    }
+
+    /// [`Self::request`] for a pose that draws `nodes`: a building's guns,
+    /// a projectile or a debris piece (`docs/picture-model-art.md`).
+    pub(crate) fn request_nodes(
+        &mut self,
+        pose: ModelPose,
+        nodes: ModelNodes,
+    ) -> Option<ModelImage> {
         self.page.as_ref()?;
         let model = Arc::as_ptr(&pose.model) as usize;
         let animated = !pose.model.model.animations.is_empty();
@@ -463,6 +566,7 @@ impl ModelFrame {
             // Frames select nothing in a model without animations, so its
             // equal poses share whatever the frames.
             frames: if animated { pose.frames } else { [0; 2] },
+            nodes,
         };
         if let Some(image) = self.keys.get(&key) {
             return Some(*image);
@@ -473,7 +577,7 @@ impl ModelFrame {
             .or_insert_with(|| Layout::of(&pose.model));
         let mut extents = Extents::new();
         let mut draws = Vec::new();
-        for (matrix, part, frame) in layout.drawn(pose.gun) {
+        for (matrix, part, frame) in layout.drawn(nodes, pose.gun) {
             let to_camera = pose.matrices[matrix] * layout.to_voxels;
             // A part at rest keeps its tight rest bounds; a posed part takes
             // its nodes' boxes, as a voxel draw takes its sections' boxes
@@ -1416,8 +1520,41 @@ mod tests {
         assert!((front.x - 128.0 * units).abs() < 1e-3, "{front}");
         let top = layout.to_voxels.transform_point3(Vec3::new(0.0, 0.5, 0.0));
         assert!(top.z > 0.0 && top.x == 0.0 && top.y == 0.0);
-        assert_eq!(layout.drawn(None).count(), 1, "the body alone");
-        assert_eq!(layout.drawn(Some(0)).count(), 2, "and turret0; no barrel");
+        assert_eq!(
+            layout.drawn(ModelNodes::Unit, None).count(),
+            1,
+            "the body alone"
+        );
+        assert_eq!(
+            layout.drawn(ModelNodes::Unit, Some(0)).count(),
+            2,
+            "and turret0; no barrel"
+        );
+    }
+
+    /// A building's guns draw `body` at the turret matrix and `barrel` at
+    /// the barrel matrix (43DA80's B8 and C0); a C0-only building draws the
+    /// barrel alone. A debris piece draws the `VoxelIndex`th mesh node, its
+    /// own mesh only, and nothing past the last.
+    #[test]
+    fn building_guns_and_debris_draw_their_nodes() {
+        let glb = crate::assets::model_file::test_glb::box_model(2.0, 1.0, 4.0, &["barrel"]);
+        let model = Arc::new(Model::from_glb(&glb).unwrap());
+        let layout = Layout::of(&DeclaredModel::for_test(model, 256));
+        let matrices = |nodes| {
+            layout
+                .drawn(nodes, None)
+                .map(|(matrix, _, _)| matrix)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(matrices(ModelNodes::BuildingGuns { turret: true }), [1, 2]);
+        assert_eq!(matrices(ModelNodes::BuildingGuns { turret: false }), [2]);
+        assert_eq!(matrices(ModelNodes::MeshNode(1)), [0]);
+        let (_, node, frame) = layout.drawn(ModelNodes::MeshNode(1), None).next().unwrap();
+        assert_eq!(node.nodes.len(), 1, "the barrel node alone");
+        assert_eq!(node.bounds.unwrap().max, [1.0, 0.5, 2.0]);
+        assert!(node.clip.is_none() && frame == 0, "at rest");
+        assert_eq!(matrices(ModelNodes::MeshNode(2)), [0usize; 0]);
     }
 
     /// A shadow lies on the bottom face as `0x00753F90`'s quad does: height

@@ -606,6 +606,7 @@ fn render_original_body_pixels(
                         lighting: &light_grid,
                         house_colors: &house_colors,
                         building_zshape: false,
+                        model_frame: None,
                     },
                     &mut objects,
                     &order,

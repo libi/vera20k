@@ -45,7 +45,7 @@ use crate::render::tactical_draw_plan::RenderZPolicy;
 use crate::render::terrain_draw::TerrainPiece;
 use crate::render::unit_atlas::PoseTilt;
 use crate::render::vxl_raster::{BodyTilt, GroundPose, VxlRenderParams};
-use crate::rules::house_colors::{self, HouseColorIndex};
+use crate::rules::house_colors::HouseColorIndex;
 use crate::rules::voxel_asset_catalog::DeclaredModel;
 use crate::rules::voxel_frame_catalog::NO_SPAWN_ALT_SUFFIX;
 
@@ -239,14 +239,9 @@ pub(super) fn emit_model_unit(
     shadow: Option<ModelShadowDraw>,
     pieces: &mut Vec<ObjectPieceInstance>,
 ) {
-    let ramp = (draw.house != house_colors::NO_REMAP)
-        .then(|| {
-            state
-                .rules()
-                .map(|rules| rules.house_color_ramps.ramp(draw.house))
-        })
-        .flatten()
-        .map(|ramp| ramp.map(|color| [color.r, color.g, color.b]));
+    let ramp = state
+        .rules()
+        .and_then(|rules| super::model_art::model_ramp(rules, draw.house));
     let request = ModelPose {
         model: Arc::clone(declared),
         matrices: pose_matrices(declared, &pose),
