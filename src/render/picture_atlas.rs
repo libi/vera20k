@@ -608,6 +608,12 @@ fn decode_declared_picture(
         }
         Err(error) => {
             log::warn!("[{section}] {file} cannot be drawn: {error}");
+            crate::rules::art_problems::report(
+                section,
+                &format!("Picture={}", decl.file),
+                &format!("{file} cannot be drawn ({error})"),
+                "it draws nothing",
+            );
             None
         }
     }
@@ -714,6 +720,12 @@ fn pack_scale(mut pictures: Vec<PlacedPicture>, max_side: u32, scale: u32) -> Ve
                 "[{}] frame {} is {width}x{height}, larger than a {max_side} page",
                 picture.key.type_id,
                 picture.key.frame
+            );
+            crate::rules::art_problems::report(
+                &picture.key.type_id,
+                "Picture=",
+                &format!("a frame is larger than a {max_side}x{max_side} page"),
+                "such frames draw nothing",
             );
             continue;
         }
