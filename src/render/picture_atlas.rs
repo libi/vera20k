@@ -331,6 +331,12 @@ impl PictureSources {
                     }
                     Err(error) => {
                         log::warn!("[{section}] {file} cannot be drawn: {error}");
+                        crate::rules::art_problems::report(
+                            section,
+                            &format!("Picture={}", decl.file),
+                            &format!("{file} cannot be drawn ({error})"),
+                            "it draws nothing",
+                        );
                         None
                     }
                 }
@@ -393,6 +399,12 @@ pub(crate) fn pack_picture_pages(
                 "[{}] frame {} is {width}x{height}, larger than a {max_side} page",
                 picture.key.type_id,
                 picture.key.frame
+            );
+            crate::rules::art_problems::report(
+                &picture.key.type_id,
+                "Picture=",
+                &format!("a frame is larger than a {max_side}x{max_side} page"),
+                "such frames draw nothing",
             );
             continue;
         }
