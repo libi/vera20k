@@ -22,12 +22,16 @@
 //! taken from the screen derivatives of position and UV.
 //!
 //! A model's shadow is a mask on the same page ([`ModelFrame::request_shadow`]):
-//! the `shadow` node's meshes, else the body's, flattened onto their bottom
-//! face and projected as `0x00753F90` projects a VXL section's bottom-face
-//! quad (+3 pixels along x, the viewer halved for `ConsideredAircraft=`),
-//! with the index plane nonzero where shadowed and the colour plane unused.
-//! The unit's piece hands it to the SHP shadow edit, so darkening follows
-//! the native rule.
+//! the `shadow` node's meshes, else the body's (a debris piece: the nodes
+//! it draws), flattened onto their bottom face and projected as
+//! `0x00753F90` projects a VXL section's bottom-face quad (+3 pixels along
+//! x, the viewer halved for `ConsideredAircraft=`), with the index plane
+//! nonzero where shadowed and the colour plane unused. The piece hands it
+//! to the SHP shadow edit, so darkening follows the native rule.
+//!
+//! Light ([`ModelLight`]) is the voxel world light, as a unit's VXL takes it
+//! (Blinn-Phong, `0x00753D00`) or as a projectile's and a debris piece's
+//! take it (diffuse only, `0x00753C80`).
 //!
 //! Nothing of a pose outlives its frame: the page is cleared and drawn again
 //! each frame that asks for one, and a frame that asks for none draws
@@ -97,8 +101,26 @@ pub(crate) struct ModelPose {
     pub ramp: Option<[[u8; 3]; 16]>,
     /// The body's and the turret's HVA frame numbers
     /// (`instances::units::animation_frames_with`); the barrel takes the
-    /// body's, as its HVA does. Unused by a model without animations.
+    /// body's, as its HVA does. A building's guns take the turret's and the
+    /// barrel's ([`ModelNodes::BuildingGuns`]). Unused by a model without
+    /// animations.
     pub frames: [u32; 2],
+    pub light: ModelLight,
+}
+
+/// VERA-only, experimental (`docs/picture-model-art.md`): how a pose is
+/// lit, as the VXL it stands in for is lit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum ModelLight {
+    /// A Techno's voxel draw (`TechnoClass::Render 0x00706ED0` ->
+    /// `0x00753D00`, [`crate::render::vxl_normals::blinn_phong_pages`]):
+    /// diffuse plus the Schlick term of the halfway vector, strength 3.
+    Unit,
+    /// A projectile's (Bullet draw `0x0046B0C0`) and a debris piece's
+    /// (VoxelAnim DrawIt `0x00749D97`) voxel draw through `0x00753C80`
+    /// ([`crate::render::vxl_normals::diffuse_pages`]): the diffuse term
+    /// alone, nothing where it is negative.
+    Diffuse,
 }
 
 /// One object's model shadow, drawn at HVA frame zero as `0x00707280`
@@ -111,6 +133,9 @@ pub(crate) struct ModelShadow {
     pub matrix: Mat4,
     /// `ConsideredAircraft=`: the viewer is halved (`0x00707319`).
     pub considered_aircraft: bool,
+    /// The nodes the shadow is cast from ([`Layout::shadow_of`]): a unit's
+    /// `shadow`, else `body`; a debris piece's drawn nodes.
+    pub nodes: ModelNodes,
 }
 
 /// VERA-only, experimental (`docs/picture-model-art.md`): which nodes a
@@ -128,6 +153,10 @@ pub(crate) enum ModelNodes {
     /// in file order, at matrix 0: a debris piece's `VoxelIndex=`, as
     /// VoxelAnim draw `749DCE` draws one VXL section. Its own meshes only.
     MeshNode(usize),
+    /// One part at matrix 0 in its rest pose: a `ShareSource=` debris
+    /// piece's shared body, turret or barrel (VoxelAnim `74B4D0`), drawn
+    /// without an HVA as `749DCE` draws the shared VXL.
+    Part(ModelPart),
 }
 
 /// Where a pose's image is this frame.
@@ -151,11 +180,13 @@ enum PoseKey {
         ramp: Option<[[u8; 3]; 16]>,
         frames: [u32; 2],
         nodes: ModelNodes,
+        light: ModelLight,
     },
     Shadow {
         model: usize,
         matrix: [u32; 16],
         considered_aircraft: bool,
+        nodes: ModelNodes,
     },
 }
 
@@ -180,13 +211,14 @@ struct PartLayout {
 
 impl PartLayout {
     /// Each mesh node with its model matrix at HVA frame `frame`: at the key
-    /// the frame selects in the part's clip, else at rest.
+    /// the frame selects in the part's clip, else at rest. None draws the
+    /// rest pose whatever the clip, as a VXL drawn without its HVA.
     fn posed<'a>(
         &'a self,
         model: &'a Model,
-        frame: u32,
+        frame: Option<u32>,
     ) -> impl Iterator<Item = (&'a PartNode, Mat4)> {
-        let pose = self.clip.and_then(|clip| {
+        let pose = self.clip.zip(frame).and_then(|(clip, frame)| {
             let animation = model.animations.get(clip)?;
             Some((clip, animation.frame_time(frame)))
         });
@@ -280,27 +312,30 @@ impl Layout {
     }
 
     /// The parts `nodes` and `gun` draw with, with the draw matrix index and
-    /// the frame index ([`ModelPose::frames`]) of each.
+    /// the frame index ([`ModelPose::frames`]) of each; None draws it at rest.
     fn drawn(
         &self,
         nodes: ModelNodes,
         gun: Option<u32>,
-    ) -> impl Iterator<Item = (usize, &PartLayout, usize)> {
+    ) -> impl Iterator<Item = (usize, &PartLayout, Option<usize>)> {
         let parts = match nodes {
             ModelNodes::Unit => [
-                Some((0, ModelPart::Body, 0)),
-                gun.map(|gun| (1, ModelPart::Turret(gun), 1)),
-                gun.map(|gun| (2, ModelPart::Barrel(gun), 0)),
+                Some((0, ModelPart::Body, Some(0))),
+                gun.map(|gun| (1, ModelPart::Turret(gun), Some(1))),
+                gun.map(|gun| (2, ModelPart::Barrel(gun), Some(0))),
             ],
+            // Building draw 43DA80's B8 at the +0x148 counter's frame and C0
+            // at its own (frame zero beside a B8, 43E2FA).
             ModelNodes::BuildingGuns { turret } => [
-                turret.then_some((1, ModelPart::Body, 0)),
-                Some((2, ModelPart::Barrel(0), 0)),
+                turret.then_some((1, ModelPart::Body, Some(0))),
+                Some((2, ModelPart::Barrel(0), Some(1))),
                 None,
             ],
+            ModelNodes::Part(part) => [Some((0, part, None)), None, None],
             ModelNodes::MeshNode(_) => [None; 3],
         };
         let mesh_node = match nodes {
-            ModelNodes::MeshNode(index) => self.mesh_nodes.get(index).map(|node| (0, node, 0)),
+            ModelNodes::MeshNode(index) => self.mesh_nodes.get(index).map(|node| (0, node, None)),
             _ => None,
         };
         parts
@@ -310,10 +345,21 @@ impl Layout {
             .chain(mesh_node)
     }
 
-    /// The part a shadow is cast from: `shadow`, else `body`.
-    fn shadow(&self) -> Option<&PartLayout> {
-        self.part(ModelPart::Shadow)
-            .or_else(|| self.part(ModelPart::Body))
+    /// The nodes a shadow of `nodes` is cast from, and the frame it is cast
+    /// at: a unit's `shadow`, else `body`, at frame 0 (`0x00707280` samples
+    /// HVA frame 0); a debris piece's drawn node or part at rest, as
+    /// `vxl_shadow::render_matrix` takes its section's bottom face with no
+    /// HVA (VoxelAnim DrawIt `0x00749CBE`). A building's guns cast none.
+    fn shadow_of(&self, nodes: ModelNodes) -> Option<(&PartLayout, Option<u32>)> {
+        match nodes {
+            ModelNodes::Unit => self
+                .part(ModelPart::Shadow)
+                .or_else(|| self.part(ModelPart::Body))
+                .map(|part| (part, Some(0))),
+            ModelNodes::MeshNode(index) => self.mesh_nodes.get(index).map(|node| (node, None)),
+            ModelNodes::Part(part) => self.part(part).map(|part| (part, None)),
+            ModelNodes::BuildingGuns { .. } => None,
+        }
     }
 }
 
@@ -459,6 +505,7 @@ struct Placed {
     ramp: Option<[[u8; 3]; 16]>,
     /// A shadow mask, drawn by the shadow pipeline.
     shadow: bool,
+    light: ModelLight,
 }
 
 /// The frame's page: the atlas page index and its render targets.
@@ -567,6 +614,7 @@ impl ModelFrame {
             // equal poses share whatever the frames.
             frames: if animated { pose.frames } else { [0; 2] },
             nodes,
+            light: pose.light,
         };
         if let Some(image) = self.keys.get(&key) {
             return Some(*image);
@@ -579,18 +627,16 @@ impl ModelFrame {
         let mut draws = Vec::new();
         for (matrix, part, frame) in layout.drawn(nodes, pose.gun) {
             let to_camera = pose.matrices[matrix] * layout.to_voxels;
+            let frame = frame.map(|frame| pose.frames[frame]);
+            let posed = part.clip.is_some() && frame.is_some();
             // A part at rest keeps its tight rest bounds; a posed part takes
             // its nodes' boxes, as a voxel draw takes its sections' boxes
             // at their HVA frame.
-            if part.clip.is_none()
-                && let Some(bounds) = part.bounds
-            {
+            if !posed && let Some(bounds) = part.bounds {
                 extents.add(to_camera, bounds);
             }
-            for (node, world) in part.posed(&pose.model.model, pose.frames[frame]) {
-                if part.clip.is_some()
-                    && let Some(local) = node.local
-                {
+            for (node, world) in part.posed(&pose.model.model, frame) {
+                if posed && let Some(local) = node.local {
                     extents.add(to_camera * world, local);
                 }
                 draws.push((node.node, to_camera * world));
@@ -606,13 +652,14 @@ impl ModelFrame {
                 draws,
                 ramp: pose.ramp,
                 shadow: false,
+                light: pose.light,
             },
         )
     }
 
     /// This frame's shadow mask of `shadow`, placed as [`Self::request`]
-    /// places an image: the `shadow` part, else the body, at its clip's
-    /// frame zero, flattened onto its bottom face ([`shadow_camera`]).
+    /// places an image: the nodes [`Layout::shadow_of`] picks, flattened
+    /// onto their bottom face ([`shadow_camera`]).
     pub(crate) fn request_shadow(&mut self, shadow: ModelShadow) -> Option<ModelImage> {
         self.page.as_ref()?;
         let model = Arc::as_ptr(&shadow.model) as usize;
@@ -620,6 +667,7 @@ impl ModelFrame {
             model,
             matrix: shadow.matrix.to_cols_array().map(f32::to_bits),
             considered_aircraft: shadow.considered_aircraft,
+            nodes: shadow.nodes,
         };
         if let Some(image) = self.keys.get(&key) {
             return Some(*image);
@@ -628,9 +676,9 @@ impl ModelFrame {
             .layouts
             .entry(model)
             .or_insert_with(|| Layout::of(&shadow.model));
-        let part = layout.shadow()?;
+        let (part, frame) = layout.shadow_of(shadow.nodes)?;
         let nodes: Vec<(usize, Mat4, Option<ModelBounds>)> = part
-            .posed(&shadow.model.model, 0)
+            .posed(&shadow.model.model, frame)
             .map(|(node, world)| (node.node, layout.to_voxels * world, node.local))
             .collect();
         // The bottom face: the lowest voxel z of the nodes' boxes.
@@ -663,6 +711,7 @@ impl ModelFrame {
                 draws,
                 ramp: None,
                 shadow: true,
+                light: ModelLight::Unit,
             },
         )
     }
@@ -770,7 +819,7 @@ impl ModelFrame {
                             to_camera,
                             normal,
                             material,
-                            light,
+                            (light, placed.light),
                             ramp.as_ref(),
                         );
                     }
@@ -876,7 +925,7 @@ fn write_block(
     to_camera: Mat4,
     normal: Mat3,
     material: &GpuMaterial,
-    light: Vec3,
+    (light, mode): (Vec3, ModelLight),
     ramp: Option<&[[f32; 3]; 16]>,
 ) {
     let mut floats = |values: &[f32]| {
@@ -904,7 +953,7 @@ fn write_block(
     };
     for flag in [
         u32::from(material.normal_map),
-        0,
+        u32::from(mode == ModelLight::Diffuse),
         alpha_mode,
         u32::from(ramp.is_some()),
     ] {
@@ -1553,8 +1602,35 @@ mod tests {
         let (_, node, frame) = layout.drawn(ModelNodes::MeshNode(1), None).next().unwrap();
         assert_eq!(node.nodes.len(), 1, "the barrel node alone");
         assert_eq!(node.bounds.unwrap().max, [1.0, 0.5, 2.0]);
-        assert!(node.clip.is_none() && frame == 0, "at rest");
+        assert!(node.clip.is_none() && frame.is_none(), "at rest");
         assert_eq!(matrices(ModelNodes::MeshNode(2)), [0usize; 0]);
+        // The guns animate: B8 at the turret's frame, C0 at the barrel's.
+        let frames = |nodes| {
+            layout
+                .drawn(nodes, None)
+                .map(|(_, _, frame)| frame)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            frames(ModelNodes::BuildingGuns { turret: true }),
+            [Some(0), Some(1)]
+        );
+        // A shared part draws alone at matrix 0 and at rest (749DCE, no
+        // HVA); a debris piece's shadow is cast from what it draws, at rest.
+        let barrel = ModelNodes::Part(ModelPart::Barrel(0));
+        assert_eq!(matrices(barrel), [0]);
+        assert_eq!(frames(barrel), [None::<usize>]);
+        let (shadow, frame) = layout.shadow_of(ModelNodes::MeshNode(1)).unwrap();
+        assert!(std::ptr::eq(shadow, node) && frame.is_none());
+        assert!(matches!(
+            layout.shadow_of(ModelNodes::Unit),
+            Some((_, Some(0)))
+        ));
+        assert!(
+            layout
+                .shadow_of(ModelNodes::BuildingGuns { turret: true })
+                .is_none()
+        );
     }
 
     /// A shadow lies on the bottom face as `0x00753F90`'s quad does: height
