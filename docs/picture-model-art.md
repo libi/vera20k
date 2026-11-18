@@ -195,3 +195,4 @@ production run on a real map with converted art.
 
 - Design: this file.
 - Chain 1: in progress.
+- Chain 6: picture art drawn (`render::picture_zoom`), written but not yet compiled or run; models follow with chain 4.
