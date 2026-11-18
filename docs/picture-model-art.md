@@ -165,8 +165,11 @@ against this list.
 - Asset lookup: no new probes; a picture or model is opened only by its key.
 - The sprite atlas: no SHP keys for a type with `Picture=`; picture pages and
   entries appended. Existing shaders, pipelines, layouts and passes untouched.
-- The world zoom pass (chain 6): one call that draws the new art after
-  magnification.
+- Zoomed drawing (chain 6, `render::picture_zoom`): `WorldZoomPass` exposes
+  its scale and window-copy frames; `render_game` prepares the HD list once
+  per frame and keeps the world zoom pass when the Options zoom alone
+  magnifies picture art; `draw_passes` draws it after the frame composite and
+  after the window copy; `SpriteAtlas` holds the HD twin pages.
 
 ## Verification
 
@@ -199,3 +202,4 @@ production run on a real map with converted art.
   BibShape and building anims, infantry and SHP vehicle bodies, and
   projectiles from declared pictures, with their frame counts and building
   render bounds taken from the pictures; not yet compiled.
+- Chain 6: picture art drawn (`render::picture_zoom`), written but not yet compiled or run; models follow with chain 4.

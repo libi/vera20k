@@ -1158,6 +1158,9 @@ pub(super) fn dispatch_draw_passes(
             &state.renderer.batch_renderer,
             pool,
             drag_tex,
+            |encoder| {
+                super::picture_zoom::draw_over_frame(state, encoder, [tac_x, tac_y, tac_w, tac_h])
+            },
         );
         zoom.color_view()
     } else {
@@ -1595,8 +1598,12 @@ fn composite_world_with_drag_rect(
     batch: &BatchRenderer,
     pool: &InstanceBufferPool,
     drag: Option<&BatchTexture>,
+    after_world: impl FnOnce(&mut wgpu::CommandEncoder),
 ) {
     zoom.composite(device, encoder, world, tactical, super::CLEAR_COLOR);
+    // VERA-only, experimental (docs/picture-model-art.md): picture art at
+    // its own resolution, over the magnified world and under the band box.
+    after_world(encoder);
     // Draw on the final pixel grid: a 1px border must not become a subpixel
     // span on the world attachment and disappear before the filtered copy.
     if drag.is_some() && pool.get("drag").is_some_and(|(_, count)| count != 0) {
@@ -1631,6 +1638,15 @@ pub(crate) fn draw_world_window_copy(
         encoder,
         view,
         state.renderer.combat_light_renderer.composition_texture(),
+        zoom,
+        crate::app::input::camera::tactical_viewport_px(state),
+    );
+    // VERA-only, experimental (docs/picture-model-art.md): picture art at
+    // its own resolution, over the world the copy just drew.
+    super::picture_zoom::draw_over_window(
+        state,
+        encoder,
+        view,
         zoom,
         crate::app::input::camera::tactical_viewport_px(state),
     );

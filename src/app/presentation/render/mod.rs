@@ -56,6 +56,7 @@ pub(crate) mod minimap_transaction;
 mod object_stages;
 #[cfg(all(test, tests_app_presentation_render))]
 mod object_stages_gpu_tests;
+mod picture_zoom;
 pub(crate) mod terrain_picture;
 
 use crate::util::time::{Duration, Instant};
@@ -241,7 +242,9 @@ pub(crate) fn render_game(
     // Wheel zoom is a presentation copy of the fully resolved world. Keep all
     // native source/depth/packed operations on the same one-texel lattice;
     // filtering each sprite (or its palette indices) loses edges and details.
-    if z == 1.0 {
+    // VERA-only, experimental (docs/picture-model-art.md): picture art the
+    // Options zoom magnifies follows the world's window copy, at zoom 1 too.
+    if z == 1.0 && !picture_zoom::needs_world_pass(state) {
         state.renderer.world_zoom_pass = None;
     } else {
         // When the Options zoom scales the frame, the world also goes
@@ -788,6 +791,10 @@ pub(crate) fn render_game(
         world_camera.zoom,
     );
     let after_effects = render_started.map(|_| Instant::now());
+
+    // VERA-only, experimental (docs/picture-model-art.md): the picture art
+    // drawn again after the magnification, from the lowered runs.
+    picture_zoom::prepare(state, &world.object_layers);
 
     // Phase 7: Dispatch draw calls in render order.
     draw_passes::dispatch_draw_passes(
