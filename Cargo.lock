@@ -3279,6 +3279,7 @@ name = "vera20k-core"
 version = "0.3.6"
 dependencies = [
  "anyhow",
+ "bitflags 2.11.0",
  "bytemuck",
  "chacha20",
  "fixed",
