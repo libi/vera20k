@@ -193,3 +193,50 @@ fn a_launch_maps_the_native_cells_for_its_house_and_allies() {
     assert!(revealed(russians).is_empty(), "a computer ally has no map");
     assert!(revealed(yuri).is_empty());
 }
+
+/// With Ares the handler's Activate (`0x10075150`) maps GetRange's cells
+/// (`0x10075250`) around a flat target in a 50x50 `Size=` diamond instead of
+/// RevealArea's spiral capped at 10: Mental Omega's `SW.Range=12` reaches 11
+/// cells out but not 12 (`sqrt(dx*dx + dy*dy) < 12`); an unset `SW.Range`
+/// takes `PsychicRevealRadius=15` capped at 10, so not the spiral's ring-10
+/// cell 10 out; `SW.Range=-1` (height 0) maps the whole diamond.
+#[test]
+fn an_ares_launch_reveals_the_handler_range() {
+    let _ares = crate::rules::ares_switch::read_ares_way(true);
+    let target = (75, 50);
+    let revealed = |name: &str| -> BTreeSet<(u16, u16)> {
+        let rules = RuleSet::from_ini(&IniFile::from_str(
+            "[CombatDamage]\nPsychicRevealRadius=15\n\
+             [SuperWeaponTypes]\n0=Scan\n1=Plain\n2=Whole\n\
+             [Scan]\nType=PsychicReveal\nAction=Custom\nSW.Range=12\n\
+             [Plain]\nType=PsychicReveal\n\
+             [Whole]\nType=PsychicReveal\nSW.Range=-1\n",
+        ))
+        .expect("Ares psychic reveal rules");
+        assert!(rules.ares_form());
+        let (rules, mut sim, americans) = world_with(rules, 128, &[]);
+        sim.set_playfield_bounds_for_test(Some(crate::sim::cell_rect::PlayfieldBounds {
+            base: 50,
+            off_fc: -128,
+            off_100: -128,
+            off_104: 256,
+            off_108: 256,
+        }));
+        sim.set_playfield_size_height_for_test(Some(50));
+        charge_super(&mut sim, americans, name);
+        click(&mut sim, &rules, americans, name, target);
+        (0..128)
+            .flat_map(|y| (0..128).map(move |x| (x, y)))
+            .filter(|&(x, y)| sim.fog.is_cell_revealed(americans, x, y))
+            .collect()
+    };
+    let scan = revealed("Scan");
+    assert_eq!(scan.len(), 437);
+    assert!(scan.contains(&(86, 50)) && !scan.contains(&(87, 50)));
+    let plain = revealed("Plain");
+    assert_eq!(plain.len(), 305);
+    assert!(plain.contains(&(84, 50)) && !plain.contains(&(85, 50)));
+    let whole = revealed("Whole");
+    assert_eq!(whole.len(), 4950, "every cell of the 50x50 diamond");
+    assert!(whole.contains(&(50, 1)) && whole.contains(&(99, 51)));
+}

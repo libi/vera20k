@@ -54,9 +54,14 @@ plays `SW.Sound`, raises the radar event and prints `Message.Launch`, each unles
 Flags skip it, and remembers the House's last Super (SWLastIndex), which a PostClick
 Super uses as its source.
 
-The other stock Types (Iron Curtain, Force Shield, the paradrops, Psychic Reveal) keep
-their stock owners in this port; parts 2 and 3 below add the Spy Plane and the
-Lightning Storm.
+The other stock Types (Iron Curtain, Force Shield, Psychic Reveal) keep their stock
+owners in this port; parts 2 and 3 below add the Spy Plane and the Lightning Storm. The
+Psychic Reveal takes two pieces of its handler: it asks for a target unless its range is
+a whole-map one, and its launch reveals that range instead of `PsychicRevealRadius=`:
+the `SW.Range` rectangle or radius, with no cap of 10, or the whole map for a negative
+width with a height of 0 or more (`SW.Range=-1`). An unset range, or one negative in
+both parts, is `PsychicRevealRadius=` capped at 10. The common Launch's shot count
+(`SW.Shots`), money, anim, sound, EVA line, message and radar event stay stock.
 
 ## Chronosphere
 

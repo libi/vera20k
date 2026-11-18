@@ -133,10 +133,33 @@ pub(super) fn area_technos_in_spread(
 
 fn area_technos_with(
     sim: &Simulation,
-    (width, height): (f32, i32),
+    range: (f32, i32),
     center: (u16, u16),
     spread: bool,
 ) -> Vec<u64> {
+    let mut found = std::collections::BTreeMap::new();
+    for cell in area_cells(sim, range, center, spread) {
+        for member in sim.native_cell_content(cell) {
+            let CellObjectMember::Entity(id) = member else {
+                continue;
+            };
+            if let Some(entity) = sim.substrate.entities.get(id) {
+                found.entry(entity.native_unique_id()).or_insert(id);
+            }
+        }
+    }
+    found.into_values().collect()
+}
+
+/// The cells Helpers::Alex::for_each_in_rect_or_range (or, with `spread`,
+/// for_each_in_rect_or_spread) hands its callback over an SWRange around
+/// `center`, in its order: each a real cell's own coordinates.
+pub(super) fn area_cells(
+    sim: &Simulation,
+    (width, height): (f32, i32),
+    center: (u16, u16),
+    spread: bool,
+) -> Vec<(u16, u16)> {
     let (cx, cy) = (i32::from(center.0 as i16), i32::from(center.1 as i16));
     let mut cells = Vec::new();
     if spread && !(height > 0 && (width as i32) > 0) {
@@ -171,24 +194,16 @@ fn area_technos_with(
         }
     }
     let terrain = sim.resolved_terrain.as_ref();
-    let mut found = std::collections::BTreeMap::new();
-    for (x, y) in cells {
+    cells
+        .into_iter()
         // MapClass::TryGetCellAt: only real cells.
-        let crate::sim::cell_rect::CellRef::Real(real) =
-            crate::sim::cell_rect::get_cellclass_fallback(terrain, x, y)
-        else {
-            continue;
-        };
-        for member in sim.native_cell_content((real.rx, real.ry)) {
-            let CellObjectMember::Entity(id) = member else {
-                continue;
-            };
-            if let Some(entity) = sim.substrate.entities.get(id) {
-                found.entry(entity.native_unique_id()).or_insert(id);
-            }
-        }
-    }
-    found.into_values().collect()
+        .filter_map(
+            |(x, y)| match crate::sim::cell_rect::get_cellclass_fallback(terrain, x, y) {
+                crate::sim::cell_rect::CellRef::Real(real) => Some((real.rx, real.ry)),
+                _ => None,
+            },
+        )
+        .collect()
 }
 
 /// SWTypeExt::IsTechnoAffected: the Techno's cell must match the land/water

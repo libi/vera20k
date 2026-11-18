@@ -782,15 +782,6 @@ pub struct SuperWeaponType {
     pub hunter_seeker: Option<crate::rules::hunter_seeker::HunterSeekerSettings>,
 }
 
-/// Whether an Ares handler's `SW.Range` keeps its custom (targeted) action:
-/// a read width below zero is a whole-map launch with no target
-/// (SW_SonarPulse 10075710, the PsychicReveal handler 10075360).
-fn ares_range_targets(section: &IniSection) -> bool {
-    crate::rules::ares_switch::ares_read(|| section.read_list("SW.Range", 0x800))
-        .and_then(|tokens| tokens.first().copied())
-        .is_none_or(|width| crate::rules::ini_value::parse_leading_f64(width) as f32 >= 0.0)
-}
-
 impl SuperWeaponType {
     /// Whether this type's `Action=` (`+0xBC`) is the ActionType named
     /// `action`. An absent `Action=` keeps the constructor's action 0, `None`.
@@ -904,22 +895,17 @@ impl SuperWeaponType {
                 // SW_Protect::Initialize10074B60 installs the custom action
                 // and SW_Cursor=IronCurtain; VERA names that cursor by action.
                 SuperWeaponKind::Protect => Some("IronCurtain".to_string()),
-                // SW_SonarPulse::LoadFromINI10075710: no action for a whole-map
-                // pulse (a read SW.Range below zero), else the custom action
-                // with the constructor's Attack cursor.
-                SuperWeaponKind::SonarPulse => {
-                    ares_range_targets(section).then(|| "Attack".to_string())
-                }
-                // The PsychicReveal handler (HandlesType 100752E0: Type 11)
-                // writes Action in LoadFromINI10075360 every pass, whatever
-                // Action= says: none for a whole-map reveal, else the custom
-                // action with Initialize100752F0's SW_Cursor 0x54; VERA names
-                // that cursor by action. An unset SW.Range is the positive
-                // PsychicRevealRadius. Residual: the handler's launch (an
-                // SW.Range reveal) and Cursor= keep the stock reveal path.
-                SuperWeaponKind::PsychicReveal => {
-                    ares_range_targets(section).then(|| "PsychicReveal".to_string())
-                }
+                // SW_SonarPulse::LoadFromINI10075710 and the PsychicReveal
+                // handler's (HandlesType 100752E0: Type 11; 10075360) write
+                // Action every pass, whatever Action= says: the custom action,
+                // with the constructor's Attack cursor for the pulse and
+                // Initialize100752F0's SW_Cursor 0x54 for the reveal (VERA
+                // names a cursor by action), or none for a whole-map range.
+                // The range needs every pass's SW.Range, so RuleSet clears
+                // the action afterwards (`project_ares_range_actions`).
+                // Residual: the reveal's Cursor= keeps the stock read.
+                SuperWeaponKind::SonarPulse => Some("Attack".to_string()),
+                SuperWeaponKind::PsychicReveal => Some("PsychicReveal".to_string()),
                 // SW_EMPulse::LoadFromINI10071510 writes Action every pass:
                 // none for `EMPulse.TargetSelf`, else the custom action with
                 // Initialize10071440's Attack cursor.
@@ -2351,6 +2337,31 @@ impl AresSuperWeaponLaunch {
         (f32::from_bits(self.range.0), self.range.1)
     }
 
+    /// A handler's GetRange: SW.Range unless it is empty (the constructor's
+    /// (-1.0, -1) included), then `width` with height -1. A negative width
+    /// is a whole-map launch.
+    fn range_or(&self, width: f32) -> (f32, i32) {
+        match self.range() {
+            (read, height) if read < 0.0 && height < 0 => (width, -1),
+            range => range,
+        }
+    }
+
+    /// SW_SonarPulse::GetRange `0x10075680`: [`Self::range_or`] radius 10.
+    /// LoadFromINI `0x10075710` takes the action and Activate `0x100753A0`
+    /// the area from it.
+    pub(crate) fn sonar_pulse_range(&self) -> (f32, i32) {
+        self.range_or(10.0)
+    }
+
+    /// SW_PsychicReveal::GetRange `0x10075250`: [`Self::range_or`]
+    /// `[CombatDamage] PsychicRevealRadius=` (`Rules+0xFEC`) capped at 10
+    /// (`0x10075269..0x1007527E`). LoadFromINI `0x10075360` takes the action
+    /// and Activate `0x10075150` the cells from it.
+    pub(crate) fn psychic_reveal_range(&self, psychic_reveal_radius: i32) -> (f32, i32) {
+        self.range_or(psychic_reveal_radius.min(10) as f32)
+    }
+
     pub(crate) fn protect_duration(&self) -> Option<i32> {
         self.protect_duration
     }
@@ -2858,20 +2869,28 @@ Type=BogusType
 
     /// The Ares PsychicReveal handler (LoadFromINI `0x10075360`) writes the
     /// custom action whatever `Action=` says, so Mental Omega's Satellite Scan
-    /// (`Action=Custom`, `SW.Range=12`) asks for a target; a negative
-    /// `SW.Range` is a whole-map reveal with none.
+    /// (`Action=Custom`, `SW.Range=12`) asks for a target; only a whole-map
+    /// GetRange (`0x10075250`) has none: `SW.Range=-1` reads height 0, but
+    /// `-1,-1` is empty, so it falls back to the reveal radius like an unset
+    /// key. The SonarPulse's GetRange (`0x10075680`) falls back the same way.
     #[test]
-    fn ares_psychic_reveal_targets_unless_its_range_is_the_whole_map() {
+    fn ares_range_handlers_drop_the_action_only_for_a_whole_map_range() {
         let _ares = crate::rules::ares_switch::read_ares_way(true);
-        let ini = IniFile::from_str(
-            "[SpySatSpecial]\nType=PsychicReveal\nAction=Custom\nSW.Range=12\n\
+        let rules = crate::rules::ruleset::RuleSet::from_ini(&IniFile::from_str(
+            "[SuperWeaponTypes]\n0=SpySatSpecial\n1=Plain\n2=Whole\n3=Empty\n4=Sonar\n\
+             [SpySatSpecial]\nType=PsychicReveal\nAction=Custom\nSW.Range=12\n\
              [Plain]\nType=PsychicReveal\nAction=None\n\
-             [Whole]\nType=PsychicReveal\nAction=PsychicReveal\nSW.Range=-1\n",
-        );
-        let action = |id| SuperWeaponType::from_ini_section(id, ini.section(id).unwrap()).action;
-        assert_eq!(action("SpySatSpecial").as_deref(), Some("PsychicReveal"));
-        assert_eq!(action("Plain").as_deref(), Some("PsychicReveal"));
+             [Whole]\nType=PsychicReveal\nAction=PsychicReveal\nSW.Range=-1\n\
+             [Empty]\nType=PsychicReveal\nSW.Range=-1,-1\n\
+             [Sonar]\nType=SonarPulse\nSW.Range=-1,-1\n",
+        ))
+        .unwrap();
+        let action = |id| rules.super_weapon(id).unwrap().action.as_deref();
+        assert_eq!(action("SpySatSpecial"), Some("PsychicReveal"));
+        assert_eq!(action("Plain"), Some("PsychicReveal"));
         assert_eq!(action("Whole"), None);
+        assert_eq!(action("Empty"), Some("PsychicReveal"));
+        assert_eq!(action("Sonar"), Some("Attack"));
     }
 
     #[test]

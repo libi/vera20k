@@ -933,13 +933,7 @@ impl Simulation {
             }
         });
         for &viewer in viewers {
-            let notify_view = if network {
-                self.houses
-                    .get(&viewer)
-                    .is_some_and(|house| house.is_human())
-            } else {
-                notification_viewer == Some(viewer)
-            };
+            let notify_view = self.reveal_notify_view(viewer, notification_viewer);
             if projection == vision::MapRevealProjection::Source
                 && !self.session.game_options().fog_of_war
                 && !notify_view
@@ -954,65 +948,145 @@ impl Simulation {
                 continue;
             }
             for &cell in &cells {
-                {
-                    let native_cells = context
-                        .terrain()
-                        .or(self.resolved_terrain.as_ref())
-                        .map(crate::map::resolved_terrain::NativeCellQuery::canonical);
-                    self.fog
-                        .clear_pending_fog(viewer, cell, native_cells.as_ref());
-                }
-                if projection == vision::MapRevealProjection::FogProtect {
-                    let admitted = {
-                        let native_cells = context
-                            .terrain()
-                            .or(self.resolved_terrain.as_ref())
-                            .map(crate::map::resolved_terrain::NativeCellQuery::canonical);
-                        self.fog
-                            .admits_fog_reveal(viewer, cell, native_cells.as_ref())
-                    };
-                    if admitted {
-                        self.reveal_fog_map_cell(viewer, cell, notify_view, context);
-                    }
-                    continue;
-                }
-                let notify = {
-                    let native_cells = context
-                        .terrain()
-                        .or(self.resolved_terrain.as_ref())
-                        .map(crate::map::resolved_terrain::NativeCellQuery::canonical);
-                    if matches!(
-                        projection,
-                        vision::MapRevealProjection::UncachedConditional
-                            | vision::MapRevealProjection::Fire
-                    ) && self
-                        .fog
-                        .map_cell_fully_known(viewer, cell, native_cells.as_ref())
-                    {
-                        continue;
-                    }
-                    self.fog.reveal_map_cell(
-                        viewer,
-                        cell,
-                        final_pass,
-                        native_cells.as_ref(),
-                        projection,
-                    )
-                };
-                if let Some(notify) = notify {
-                    if notify_view {
-                        self.notify_cell_change(notify.cell, viewer, notify.fresh, context);
-                    }
-                    if notify.clean_fog {
-                        self.clean_fog(viewer, notify.cell, context);
-                    }
-                }
+                self.reveal_area_cell(viewer, cell, final_pass, notify_view, projection, context);
             }
         }
         //5673A0's native House rejection567570..5D0 skips its border too.
         //Keep the admitted local XYZ captured before any synchronous callback;
         //a logical other-viewer projection is not another admitted native call.
         local_origin.filter(|_| (network && !viewers.is_empty()) || notification_viewer.is_some())
+    }
+
+    /// Whether a reveal's writes to `viewer`'s map reach its receivers: each
+    /// human House's in a network game, else the admitted player's.
+    fn reveal_notify_view(
+        &self,
+        viewer: crate::sim::intern::InternedId,
+        notification_viewer: Option<crate::sim::intern::InternedId>,
+    ) -> bool {
+        if self.session.game_mode().is_network() {
+            self.houses
+                .get(&viewer)
+                .is_some_and(|house| house.is_human())
+        } else {
+            notification_viewer == Some(viewer)
+        }
+    }
+
+    /// RevealArea's leaf for one cell of `viewer`'s map
+    /// (`0x00567CCB..0x00567D74`): clear the cell's flag 0x40, then hand it to
+    /// `0x004A9DD0` for a fog reveal, else to `0x00653830` (Map vt+0x94) with
+    /// `final_pass`.
+    fn reveal_area_cell(
+        &mut self,
+        viewer: crate::sim::intern::InternedId,
+        cell: (u16, u16),
+        final_pass: bool,
+        notify_view: bool,
+        projection: vision::MapRevealProjection,
+        context: UninitContext<'_>,
+    ) {
+        {
+            let native_cells = context
+                .terrain()
+                .or(self.resolved_terrain.as_ref())
+                .map(crate::map::resolved_terrain::NativeCellQuery::canonical);
+            self.fog
+                .clear_pending_fog(viewer, cell, native_cells.as_ref());
+        }
+        if projection == vision::MapRevealProjection::FogProtect {
+            let admitted = {
+                let native_cells = context
+                    .terrain()
+                    .or(self.resolved_terrain.as_ref())
+                    .map(crate::map::resolved_terrain::NativeCellQuery::canonical);
+                self.fog
+                    .admits_fog_reveal(viewer, cell, native_cells.as_ref())
+            };
+            if admitted {
+                self.reveal_fog_map_cell(viewer, cell, notify_view, context);
+            }
+            return;
+        }
+        let notify = {
+            let native_cells = context
+                .terrain()
+                .or(self.resolved_terrain.as_ref())
+                .map(crate::map::resolved_terrain::NativeCellQuery::canonical);
+            if matches!(
+                projection,
+                vision::MapRevealProjection::UncachedConditional
+                    | vision::MapRevealProjection::Fire
+            ) && self
+                .fog
+                .map_cell_fully_known(viewer, cell, native_cells.as_ref())
+            {
+                return;
+            }
+            self.fog
+                .reveal_map_cell(viewer, cell, final_pass, native_cells.as_ref(), projection)
+        };
+        if let Some(notify) = notify {
+            if notify_view {
+                self.notify_cell_change(notify.cell, viewer, notify.fresh, context);
+            }
+            if notify.clean_fog {
+                self.clean_fog(viewer, notify.cell, context);
+            }
+        }
+    }
+
+    /// Installed Ares `MapRevealer::Process1 @ 0x100694D0` with fog off, on
+    /// each of `viewers`' maps a reveal writes, for every cell of `cells` in
+    /// order, or with `None` for every allocated cell inside the map's
+    /// `Size=` diamond (`MapRevealer::IsCellAvailable`), walked with the
+    /// shared `0x00578350`/`0x00578290` cursor. Process1 clears the cell's
+    /// flag 0x40 and calls Map vt+0x94 (`0x00653830`) with PlayerPtr and
+    /// `final_pass`: RevealArea's leaf ([`Self::reveal_area_cell`]). Its
+    /// `IsCellAllowed @ 0x10069480` skips RevealArea's three network cells,
+    /// dormant here as there ([`vision::collect_reveal_cells`]).
+    pub(crate) fn reveal_map_revealer_cells(
+        &mut self,
+        viewers: &[crate::sim::intern::InternedId],
+        cells: Option<&[(u16, u16)]>,
+        final_pass: bool,
+        context: UninitContext<'_>,
+        notification_viewer: Option<crate::sim::intern::InternedId>,
+    ) {
+        let leaf = |sim: &mut Self, cell| {
+            for &viewer in viewers {
+                let notify_view = sim.reveal_notify_view(viewer, notification_viewer);
+                sim.reveal_area_cell(
+                    viewer,
+                    cell,
+                    final_pass,
+                    notify_view,
+                    vision::MapRevealProjection::Transient,
+                    context,
+                );
+            }
+        };
+        match cells {
+            Some(cells) => {
+                for &cell in cells {
+                    leaf(self, cell);
+                }
+            }
+            None => {
+                let diamond = self.map_size_diamond();
+                self.for_each_allocated_map_cell(context, |sim, cell| {
+                    if diamond.is_none_or(|(width, height)| {
+                        crate::map::playfield::size_diamond_contains(
+                            width,
+                            height,
+                            (cell.0 as i16, cell.1 as i16),
+                        )
+                    }) {
+                        leaf(sim, cell);
+                    }
+                });
+            }
+        }
     }
 
     /// Original CellChangeNotify5865F0..5866BA: seven height-admitted

@@ -6235,6 +6235,7 @@ impl RuleSet {
                     sw.presentation = presentation.clone();
                 }
             }
+            rules.project_ares_range_actions();
             for (name, supers) in processed.additional_super_weapon_states() {
                 if let Some(building) = rules.object_list.iter_mut().find(|object| {
                     object.category == ObjectCategory::Building
@@ -11222,6 +11223,32 @@ impl RuleSet {
         crate::util::native_string::with_ascii_uppercase(id, |key| {
             self.ares_super_weapon_metadata.get(key)
         })
+    }
+
+    /// SW_SonarPulse::LoadFromINI `0x10075710` and SW_PsychicReveal's
+    /// (`0x10075360`) write Action on every pass from their GetRange: none
+    /// for a whole-map range (a negative width), else the custom action
+    /// [`SuperWeaponType::from_ini_section`] installs. The last pass sees the
+    /// final SW.Range and `PsychicRevealRadius=`, as each launch does.
+    fn project_ares_range_actions(&mut self) {
+        use crate::rules::superweapon_type::SuperWeaponKind;
+        let radius = self.general.psychic_reveal_radius;
+        for sw in self.super_weapons.values_mut() {
+            let Some(metadata) = self
+                .ares_super_weapon_metadata
+                .get(&sw.id.to_ascii_uppercase())
+            else {
+                continue;
+            };
+            let (width, _) = match sw.kind {
+                SuperWeaponKind::SonarPulse => metadata.launch().sonar_pulse_range(),
+                SuperWeaponKind::PsychicReveal => metadata.launch().psychic_reveal_range(radius),
+                _ => continue,
+            };
+            if width < 0.0 {
+                sw.action = None;
+            }
+        }
     }
 
     /// The Phobos techno gates for a superweapon, if the capability is
