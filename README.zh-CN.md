@@ -1,3 +1,24 @@
+# VERA Mod Engine
+
+[产品说明书](docs/zh-CN/mod-engine-product-guide.md) · [项目 Issues](https://github.com/YuriPlanet/vera-mod-engine/issues) · [English](README.md)
+
+VERA Mod Engine 是 YuriPlanet 面向红警 2 MOD 和任务地图作者维护的 VERA20K 开发分支。设计允许制作组选用 RA2、尤里的复仇（YR）或指定版本的 Ares 预设，再用同一套 INI 机制配置单位运动、弹道、附加效果（AE）和地图触发。
+
+**开发进度。** 当前公开的是设计规格、INI 来源索引和实施路线图。第一个里程碑用同一张 YR 遭遇战地图对照灰熊坦克的原版 105mm 炮与一门慢弧线炮，分别验证飞行时间、顶高、引爆和伤害。仓库从 [YuriPlanet/vera20k 的 4b9af40](https://github.com/YuriPlanet/vera20k/commit/4b9af402654fd61ca6338aca9502071e6e2d4063) 分出。
+
+| 文档 | 可查内容 |
+|---|---|
+| [产品说明书](docs/zh-CN/mod-engine-product-guide.md) | 怎样选预设、怎样写一枚慢弧线弹，以及老地图如何导入和核对 |
+| [玩法系统规格](docs/zh-CN/composable-gameplay-design.md) | 对象标签、过滤器、运动器、效果器及存档和联机规则 |
+| [INI 兼容性手册](docs/zh-CN/ini-preset-wrapping.md) | RA2、YR、Ares 的文件、读键与版本差异，附三份可查询索引 |
+| [实施路线图](docs/zh-CN/composable-gameplay-roadmap.md) | 从 VERA 源码改造到六个可玩里程碑的工作项和验收条件 |
+| [上游 RFC 意见汇编](docs/zh-CN/rfc-4653-feedback.md) | [VERA20K #4653](https://github.com/YuriPlanet/vera20k/pull/4653) 参与者的方案、分歧和待定问题，附各自原帖 |
+
+提交兼容问题时，请附游戏或 Ares 版本、相关 INI 节或 FA2 触发，以及原版和当前的表现。[进入项目 Issues](https://github.com/YuriPlanet/vera-mod-engine/issues)
+
+<details>
+<summary>上游 VERA20K 项目说明、构建与贡献指南</summary>
+
 <img src="docs/images/new-conscirpt-hero-image.png" alt="VERA20K 横幅" width="100%">
 
 <p align="center" dir="ltr">
@@ -135,3 +156,5 @@ This product includes software developed by the [Phobos Developers](docs/phobos.
 - [Ghidra 工作流程](docs/ghidra-workflow.md)：分析原版引擎。
 
 本文件译自 [README.md](README.md)，请与英文版保持同步。
+
+</details>
