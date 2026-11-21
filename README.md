@@ -1,3 +1,24 @@
+# VERA Mod Engine
+
+[简体中文](README.zh-CN.md) · [中文产品说明书](docs/zh-CN/mod-engine-product-guide.md) · [Project issues](https://github.com/YuriPlanet/vera-mod-engine/issues)
+
+VERA Mod Engine is YuriPlanet’s development fork of VERA20K for Red Alert 2 mod and mission authors. Its proposed INI format lets a mod choose an RA2, Yuri’s Revenge, or versioned Ares preset and then define movement, projectiles, attach effects, and map triggers on a shared simulation.
+
+**Development status.** The design and INI inventories are available for review. The first implementation milestone compares the Grizzly Tank’s stock 105mm gun with a shell whose flight time and arc height can be configured independently. The initial source is [YuriPlanet/vera20k at 4b9af40](https://github.com/YuriPlanet/vera20k/commit/4b9af402654fd61ca6338aca9502071e6e2d4063).
+
+| Documentation | Contents |
+|---|---|
+| [Product manual](docs/zh-CN/mod-engine-product-guide.md) | Choosing an INI preset, a worked projectile example, and the legacy map import workflow |
+| [Gameplay specification](docs/zh-CN/composable-gameplay-design.md) | Object flags, filters, motion, effects, savegames, and lockstep |
+| [INI compatibility reference](docs/zh-CN/ini-preset-wrapping.md) | RA2, YR, and Ares readers, their differences, and three searchable source inventories |
+| [Implementation roadmap](docs/zh-CN/composable-gameplay-roadmap.md) | VERA code entry points, six playable milestones, and acceptance criteria |
+| [Upstream RFC feedback](docs/zh-CN/rfc-4653-feedback.md) | Attributed proposals, design differences, and open questions from [VERA20K PR #4653](https://github.com/YuriPlanet/vera20k/pull/4653) |
+
+The design documents are in Chinese. Compatibility reports belong in this fork’s issue tracker. Please identify the game or Ares version and include the relevant INI section or FinalAlert 2 trigger. [Open an issue](https://github.com/YuriPlanet/vera-mod-engine/issues)
+
+<details>
+<summary>Upstream VERA20K README, including build and contributor information</summary>
+
 <img src="docs/images/new-conscirpt-hero-image.png" alt="VERA20K hero image" width="100%">
 
 <p align="center" dir="ltr">
@@ -139,3 +160,5 @@ This product includes software developed by the [Phobos Developers](docs/phobos.
 - [Map testing](tools/map_observation.md): scripted scenarios, screenshots and match observations.
 - [Native comparisons](tools/native_oracle.md): comparing behavior with the original game.
 - [Ghidra workflow](docs/ghidra-workflow.md): inspecting the original engine.
+
+</details>
