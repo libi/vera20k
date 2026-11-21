@@ -339,10 +339,18 @@ impl GpuContext {
         } else {
             required_limits
         };
+        // The GPU timer marks with a compute pass that writes a storage
+        // buffer, which the device above has none of; like WebGL2, the
+        // compatibility mode goes untimed.
+        let required_features = if gl_fallback {
+            wgpu::Features::empty()
+        } else {
+            super::gpu_timer::GpuTimer::features(&adapter)
+        };
         let (device, queue): (wgpu::Device, wgpu::Queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("RA2 Device"),
-                required_features: super::gpu_timer::GpuTimer::features(&adapter),
+                required_features,
                 required_limits,
                 ..Default::default()
             })
