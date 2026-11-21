@@ -1,160 +1,74 @@
 # VERA Mod Engine
 
-[产品说明书](docs/zh-CN/mod-engine-product-guide.md) · [项目 Issues](https://github.com/YuriPlanet/vera-mod-engine/issues) · [English](README.md)
+[English](README.md) · **简体中文** · [Deutsch](README.de.md)
 
-VERA Mod Engine 是 YuriPlanet 面向红警 2 MOD 和任务地图作者维护的 VERA20K 开发分支。设计允许制作组选用 RA2、尤里的复仇（YR）或指定版本的 Ares 预设，再用同一套 INI 机制配置单位运动、弹道、附加效果（AE）和地图触发。
+VERA Mod Engine 是 YuriPlanet 基于 VERA20K 独立维护的 Rust 引擎分支，面向《红色警戒 2》的 MOD 和任务地图作者。项目的目标是让制作组保留某一版游戏的规则、科技树和战役，通过 INI 单独改写一种玩法。例如，RA2 MOD 可以只给一个弹头添加 Ares 风格的减速效果，其余武器仍按 RA2 原有的规则结算。
 
-**开发进度。** 当前公开的是设计规格、INI 来源索引和实施路线图。第一个里程碑用同一张 YR 遭遇战地图对照灰熊坦克的原版 105mm 炮与一门慢弧线炮，分别验证飞行时间、顶高、引爆和伤害。仓库从 [YuriPlanet/vera20k 的 4b9af40](https://github.com/YuriPlanet/vera20k/commit/4b9af402654fd61ca6338aca9502071e6e2d4063) 分出。
+**开发状态。** 仓库已提供 VERA20K 引擎源码、设计规格和三份可供工具查询的索引，分别覆盖零售版 INI、原版程序读取的键名和 Ares 手册条目。下文介绍的兼容预设和新 INI 语法处于设计阶段。
 
-| 文档 | 可查内容 |
-|---|---|
-| [产品说明书](docs/zh-CN/mod-engine-product-guide.md) | 怎样选预设、怎样写一枚慢弧线弹，以及老地图如何导入和核对 |
-| [玩法系统规格](docs/zh-CN/composable-gameplay-design.md) | 对象标签、过滤器、运动器、效果器及存档和联机规则 |
-| [INI 兼容性手册](docs/zh-CN/ini-preset-wrapping.md) | RA2、YR、Ares 的文件、读键与版本差异，附三份可查询索引 |
-| [实施路线图](docs/zh-CN/composable-gameplay-roadmap.md) | 从 VERA 源码改造到六个可玩里程碑的工作项和验收条件 |
-| [上游 RFC 意见汇编](docs/zh-CN/rfc-4653-feedback.md) | [VERA20K #4653](https://github.com/YuriPlanet/vera20k/pull/4653) 参与者的方案、分歧和待定问题，附各自原帖 |
+## 兼容预设
 
-提交兼容问题时，请附游戏或 Ares 版本、相关 INI 节或 FA2 触发，以及原版和当前的表现。[进入项目 Issues](https://github.com/YuriPlanet/vera-mod-engine/issues)
+每套预设规定本局加载哪些文件、如何读取 INI 标签，以及任务地图可用的事件和动作编号。按设计，三套预设共用一套单位运动、武器发射、伤害、附加效果（AE）和地图触发系统。
 
-<details>
-<summary>上游 VERA20K 项目说明、构建与贡献指南</summary>
+| 预设 | 规则与任务 | 兼容性对照 |
+|---|---|---|
+| 红色警戒 2（RA2） | `rules.ini`、`art.ini`、`ai.ini` 及 RA2 地图 | 零售版 RA2 |
+| 尤里的复仇（YR） | `rulesmd.ini`、`artmd.ini`、`aimd.ini` 及 YR 地图，按模式和地图的覆盖顺序读取 | 零售版 YR 战役与遭遇战 |
+| Ares | 在 YR 定义上补入指定 Ares 版本的 INI 标签、触发编号和默认行为修订 | 分别对照 YR 1.001 搭配 Ares 3.0、3.0p1 的表现 |
 
-<img src="docs/images/new-conscirpt-hero-image.png" alt="VERA20K 横幅" width="100%">
+在拟议的 INI 里，一条触发规则由事件、过滤器和效果器组成。例如，电场可以给进入区域的步兵和弹体临时挂上 `Tesla` 标记。检测区的另一条触发只看这个标记，在标记有效期间便能选中这两类对象。
 
-<p align="center" dir="ltr">
-  <a href="README.vi.md" lang="vi">Tiếng Việt</a> · <a href="README.sv.md" lang="sv">Svenska</a> · <strong>简体中文</strong> · <a href="README.de.md" lang="de">Deutsch</a> · <a href="README.ar.md" lang="ar" dir="rtl">العربية</a> · <a href="README.es.md" lang="es">Español</a> · <a href="README.ja.md" lang="ja">日本語</a> · <a href="README.ru.md" lang="ru">Русский</a> · <a href="README.th.md" lang="th">ไทย</a> · <a href="README.tr.md" lang="tr">Türkçe</a> · <a href="README.md" lang="en">English</a>
-</p>
-<p align="center" dir="ltr">
-  <a href="https://github.com/YuriPlanet/vera20k/actions/workflows/linux.yml?query=branch%3Amain" title="最近一次手动运行的 Linux 库测试"><img src="https://github.com/YuriPlanet/vera20k/actions/workflows/linux.yml/badge.svg?branch=main" alt="Linux 库测试" height="23" align="middle"></a>
-  <a href="https://github.com/YuriPlanet/vera20k/actions/workflows/windows.yml?query=branch%3Amain" title="最近一次手动运行的 Windows 库测试"><img src="https://github.com/YuriPlanet/vera20k/actions/workflows/windows.yml/badge.svg?branch=main" alt="Windows 库测试" height="23" align="middle"></a>
-  <a href="https://discord.gg/kmjRUn5m5F"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Fv10%2Finvites%2FkmjRUn5m5F%3Fwith_counts%3Dtrue&amp;query=%24.approximate_presence_count&amp;suffix=%20online&amp;label=VERA20K%20Discord&amp;color=5865F2&amp;style=flat&amp;logo=discord&amp;logoColor=white" alt="加入 Discord" height="23" align="middle"></a>
-  <img src="https://img.shields.io/badge/VERA20K_QQ-1097193563-1EBAFC?style=flat&amp;logo=qq&amp;logoColor=white" alt="QQ 群 (VERA20K)" height="23" align="middle">
-  <img src="https://img.shields.io/badge/ra20k.com_QQ-319832195-1EBAFC?style=flat&amp;logo=qq&amp;logoColor=white" alt="QQ 群 (ra20k.com)" height="23" align="middle">
-</p>
+首批制作工具包括手写 INI 所用的字段字典和织网者（INIWeaver）模板。MOD 自编 WebAssembly 模块安排在后续阶段。
 
-# VERA20K
+## 示例 · 指定炮弹的飞行时间
 
-VERA20K 是《红色警戒2：尤里的复仇》的全新引擎。玩起来和原版一样，单位、地图和画面都相同，可在 Windows、macOS 和 Linux 上运行。它支持更大规模的战斗：一张地图最多 30 名玩家、20,000 个单位。
+第一个里程碑在同一张 YR 地图上对照两门炮。一门使用灰熊坦克的原版 `105mm`，另一门保留原弹头，为弹体指定以下拟议的运动方案。
 
-VERA20K 由玩家打造、为玩家而做，项目的方向由玩家说了算。
+```ini
+[Motion demo.HighArc]
+Goal=SnapshotAtStart
+Path=Line
+Pace=FixedTicks(60)
+Height=PeakAboveHigherEnd(192lepton)
+Facing=AlongPath
+```
 
-<img src="docs/images/vera20k-screenshots.png" alt="VERA20K 遭遇战设置界面和游戏画面" width="100%">
+在没有遮挡的情况下，炮弹应在第 60 个逻辑帧到达开火时记录的落点。修改 `192lepton` 可以单独调整弧顶高出较高端点的距离，飞行时间仍为 60 帧。提前撞桥时应只引爆一次。半空存档再读回，命中帧应与连续运行一致。[完整武器与弹体配置](docs/zh-CN/mod-engine-product-guide.md#配置示例--分别设定飞行时间与弧高)
 
-## 下载与游玩
+## 项目文档
 
-1. 从 Steam 或 EA app 安装《红色警戒2：尤里的复仇》。
-2. 从[发布页面](https://github.com/YuriPlanet/vera20k/releases)下载适合你系统的 VERA20K。
-3. 打开下载的文件。它会找到你的游戏，并把 VERA20K 安装到单独的文件夹。
+当前引擎的 MOD 配置、构建与测试工具已有英文指南。[MOD 制作指南](docs/modding.md) · [开发工具](tools/README.md)
 
-遇到问题？请看[帮助页面](https://vera20k.org/zh/help)。
+以下为本项目的中文设计文档。
 
-## 项目目标
-
-1. 保留原版《红色警戒2：尤里的复仇》的玩法、画面和氛围。
-2. 支持更大规模的战斗：在 500×500 的地图上，容纳最多 **30 名玩家**和 **20,000 个单位**。
-3. 加入 RTS 游戏中已有的功能，以及一些前所未见的功能。
-4. 内置多人游戏客户端
-
-## 参与贡献
-
-贡献者可以负责引擎的某些部分，并有很大的自由度去做推动 VERA20K 发展的改动。
-
-维护者会协助审查、集成和合并。你的贡献会完整保留你的署名。
-
-讨论在 [Discord](https://discord.gg/kmjRUn5m5F) 和 QQ 群（1097193563）进行。
-
-## 架构
-
-引擎分为三个主要部分：
-
-- **模拟层：** 负责游戏状态和逻辑。
-- **渲染层：** 使用原版游戏的美术素材，在 GPU 上绘制地形、单位和建筑。
-- **应用层：** 处理输入、菜单、音频和平台集成，并连接各个系统。
-
-这种分离有助于保持游戏行为的确定性。
-
-箭头表示数据流向：
-
-![应用层向模拟层发送指令并接收世界状态，再向渲染层发送绘制数据。](docs/images/architecture.zh-CN.png)
+- [产品说明书与 INI 配置示例](docs/zh-CN/mod-engine-product-guide.md)
+- [INI 兼容手册与来源索引](docs/zh-CN/ini-preset-wrapping.md)
+- [运动、规则和效果系统规格](docs/zh-CN/composable-gameplay-design.md)
+- [实施路线图与验收条件](docs/zh-CN/composable-gameplay-roadmap.md)
+- [上游 RFC #4653 参与者建议、作者回复与待定问题](docs/zh-CN/rfc-4653-feedback.md)
 
 ## 编译与运行
 
-你需要：
-
-- **Rust 和 Git：** 通过 rustup 安装的 [Rust](https://rustup.rs/) 1.97 或更高版本，以及
-  [Git](https://git-scm.com/)。
-- **构建工具：** Windows 上需要 Visual Studio 的 C++ 生成工具，Rust 安装程序会提示安装；macOS 上运行
-  `xcode-select --install`；Debian 和 Ubuntu 上运行 `sudo apt install build-essential libasound2-dev libxkbcommon-x11-0 pkg-config`。
+当前桌面客户端从本机《尤里的复仇》安装目录读取游戏素材。构建需要 Git 和通过 rustup 安装的稳定版 Rust。Windows 使用 Visual Studio C++ 生成工具，macOS 使用 Xcode 命令行工具。Debian 或 Ubuntu 需安装 `build-essential`、`pkg-config`、`libasound2-dev` 和 `libxkbcommon-x11-0`。[Rust 工具链](rust-toolchain.toml)
 
 ```sh
-git clone https://github.com/YuriPlanet/vera20k.git
-cd vera20k
-cp config.toml.example config.toml
-# 运行前，编辑 config.toml，将 ra2_dir 设为你的游戏文件夹：
-cargo run --release --bin vera20k
+git clone https://github.com/YuriPlanet/vera-mod-engine.git
+cd vera-mod-engine
 ```
 
-## 我们如何开发
+将 `config.toml.example` 复制为 `config.toml`，在 `[paths]` 节把 `ra2_dir` 设为游戏安装目录。然后从仓库根目录启动客户端。
 
-大部分代码由 AI 编程助手编写。它们用 Ghidra 研究原版引擎，再将其行为移植到 Rust，
-通过[对比工具](tools/native_oracle.md)和实际游玩进行检查。AI 助手遵循 [AGENTS.md](AGENTS.md)。
+```sh
+cargo run --locked --profile fast --bin vera20k
+```
 
-<!-- Chinese-only section: intentionally absent from README.md and the other translations. -->
-## 致中国玩家和开发者
+## 参与贡献
 
-VERA20K 的开发者都是你们的朋友。我们希望把庞大的中国红警玩家群体与世界各地的玩家联系在一起，让大家可以一起对战。
+报告兼容问题时，请标明游戏和扩展版本，附上能复现问题的最小 INI 片段或 FinalAlert 2（FA2）触发，并说明原版与本分支各自的实际表现。提交引擎改动时，请写明改动影响的行为及用于验证的场景。[项目 Issues](https://github.com/YuriPlanet/vera-mod-engine/issues)
 
-我们非常希望中国的开发者和玩家加入进来，和我们一起开发、一起游玩！
-欢迎在 GitHub 上[提交 issue](https://github.com/YuriPlanet/vera20k/issues)，或者来 [Discord](https://discord.gg/kmjRUn5m5F) 或 QQ 群（群号 1097193563）找我们。
-用中文写 issue 也完全没问题。
+## 许可证与署名
 
-## 自定义
+版权所有 © 2026 Halvor Nikolai Rusten 及 VERA20K 贡献者。引擎代码采用 GPLv3 及项目附加条款。Command & Conquer 和 Red Alert 为 Electronic Arts Inc. 的商标。[上游项目](https://github.com/YuriPlanet/vera20k) · [GPLv3 许可证](LICENSE-GPL) · [法律声明与附加条款](LEGAL.md#additional-terms)
 
-VERA20K 默认使用《尤里的复仇》原版规则。你可以在 **Options** 菜单中调整声音、画面和操作设置，也可以开启 VERA 专属功能。游戏会将设置保存在 `VERA.INI` 中，其中 VERA 专属选项位于 `[VERA]` 节。
-
-大厅设置、模组和地图都能改变对局规则。模组和地图可以通过 INI 文件启用 VERA20K 支持的 [Ares](docs/ares.md) 和 [Phobos](docs/phobos.md) 功能。模组也可以通过附带 `ares.mix` 来启用 Ares。部分 Phobos 功能仍需在编译时加上 `--features phobos`。
-
-想制作自己的模组，可以从[模组制作指南](docs/modding.md)开始。
-
-## 支持项目
-
-<a href="https://paypal.me/vera20k"><img src="https://img.shields.io/badge/Donate_via_PayPal-FFC439?style=flat&amp;logo=paypal&amp;logoColor=003087" alt="通过 PayPal 支持 VERA20K" height="23"></a>
-
-所有收到的捐款都将根据
-[TIBTRE 贡献账本](https://github.com/YuriPlanet/tibtre-ledger)分配给贡献者。
-
-贡献者收款方式：
-
-<p><img src="https://img.shields.io/badge/PayPal-003087?style=flat&amp;logo=paypal&amp;logoColor=white" alt="PayPal" height="23"> <img src="https://img.shields.io/badge/China_UnionPay-E21836?style=flat&amp;logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii02IC02IDI2OCAxNzIiPjxwYXRoIGQ9Ik01MC4wNDE2MzEsMC4wMDA2Njc1NjMzMDUgTDExMy44MjAyMTEsMC4wMDA2Njc1NjMzMDUgQzEyMi43MjMxMjcsMC4wMDA2Njc1NjMzMDUgMTI4LjI2MDQzOCw3LjI1NzMxMzQ1IDEyNi4xODM1NTgsMTYuMTg5NzY1NyBMOTYuNDkwMDcxNSwxNDMuNjc1NDE2IEM5NC4zOTQ1MzY1LDE1Mi41NzY3NzcgODUuNDgwNzM5LDE1OS44Mzk2NDEgNzYuNTcxNjA1LDE1OS44Mzk2NDEgTDEyLjc5OTI0MzMsMTU5LjgzOTY0MSBDMy45MDg3NjQsMTU5LjgzOTY0MSAtMS42NDA5ODQ0NCwxNTIuNTc2Nzc3IDAuNDM1ODk2MjA4LDE0My42NzU0MTYgTDMwLjE0MTgxODYsMTYuMTg5NzY1NyBDMzIuMjE4Njk5Myw3LjI1NzMxMzQ1IDQxLjEyNzgzMzMsMC4wMDA2Njc1NjMzMDUgNTAuMDQxNjMxLDAuMDAwNjY3NTYzMzA1IiBmaWxsPSIjRTIxODM2IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjxwYXRoIGQ9Ik0xMDguNTEzMjgzLDAuMDAwNjY3NTYzMzA1IEwxODEuODU3MDE4LDAuMDAwNjY3NTYzMzA1IEMxOTAuNzU4Mzc4LDAuMDAwNjY3NTYzMzA1IDE4Ni43NDQ1MjcsNy4yNTczMTM0NSAxODQuNjUwNTQ2LDE2LjE4OTc2NTcgTDE1NC45NjE3MjQsMTQzLjY3NTQxNiBDMTUyLjg3ODYyNSwxNTIuNTc2Nzc3IDE1My41Mjg0MjcsMTU5LjgzOTY0MSAxNDQuNjA4NDExLDE1OS44Mzk2NDEgTDcxLjI2NDY3NzUsMTU5LjgzOTY0MSBDNjIuMzQ0NjYxNSwxNTkuODM5NjQxIDU2LjgyNDQ0OTUsMTUyLjU3Njc3NyA1OC45MTk5ODUsMTQzLjY3NTQxNiBMODguNjA3MjUyNSwxNi4xODk3NjU3IEM5MC43MTUyMjQsNy4yNTczMTM0NSA5OS42MDU3MDM1LDAuMDAwNjY3NTYzMzA1IDEwOC41MTMyODMsMC4wMDA2Njc1NjMzMDUiIGZpbGw9IiMwMDQ0N0MiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI4IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8%2BPHBhdGggZD0iTTE3OC45NDc4MywwLjAwMDY2NzU2MzMwNSBMMjQyLjcyNjQwOSwwLjAwMDY2NzU2MzMwNSBDMjUxLjY0MTc2MiwwLjAwMDY2NzU2MzMwNSAyNTcuMTc5MDc0LDcuMjU3MzEzNDUgMjU1LjA4NTA5MywxNi4xODk3NjU3IEwyMjUuMzk2MjcxLDE0My42NzU0MTYgQzIyMy4zMDA3MzYsMTUyLjU3Njc3NyAyMTQuMzgwNzE5LDE1OS44Mzk2NDEgMjA1LjQ2NjkyMiwxNTkuODM5NjQxIEwxNDEuNzE3ODc5LDE1OS44Mzk2NDEgQzEzMi43OTc4NjMsMTU5LjgzOTY0MSAxMjcuMjY1MjE1LDE1Mi41NzY3NzcgMTI5LjM1NDUzMiwxNDMuNjc1NDE2IEwxNTkuMDQ4MDE3LDE2LjE4OTc2NTcgQzE2MS4xMjQ4OTksNy4yNTczMTM0NSAxNzAuMDI3ODE0LDAuMDAwNjY3NTYzMzA1IDE3OC45NDc4MywwLjAwMDY2NzU2MzMwNSIgZmlsbD0iIzAwN0I4NCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjgiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48L3N2Zz4%3D" alt="China UnionPay" height="23"> <img src="https://img.shields.io/badge/Alipay-1677FF?style=flat&amp;logo=alipay&amp;logoColor=white" alt="Alipay" height="23"> <img src="https://img.shields.io/badge/Vipps-FF5B24?style=flat&amp;logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjQzLjUgMjEuNSAyNyAyNyI%2BPHBhdGggZD0iTTU3LjMsNDAuNmMzLjcsMCw1LjgtMS44LDcuOC00LjRjMS4xLTEuNCwyLjUtMS43LDMuNS0wLjlzMS4xLDIuMywwLDMuN2MtMi45LDMuOC02LjYsNi4xLTExLjMsNi4xIGMtNS4xLDAtOS42LTIuOC0xMi43LTcuN2MtMC45LTEuMy0wLjctMi43LDAuMy0zLjRzMi41LTAuNCwzLjQsMUM1MC41LDM4LjMsNTMuNSw0MC42LDU3LjMsNDAuNnogTTY0LjIsMjguM2MwLDEuOC0xLjQsMy0zLDMgcy0zLTEuMi0zLTNzMS40LTMsMy0zQzYyLjgsMjUuMyw2NC4yLDI2LjYsNjQuMiwyOC4zeiIgZmlsbD0iI2ZmZiIvPjwvc3ZnPg%3D%3D" alt="Vipps" height="23"> <img src="https://img.shields.io/badge/SEPA-2D4B9A?style=flat&amp;logo=sepa&amp;logoColor=white" alt="SEPA" height="23"> <img src="https://img.shields.io/badge/Bitcoin-F7931A?style=flat&amp;logo=bitcoin&amp;logoColor=white" alt="Bitcoin" height="23"></p>
-
-## 致谢与法律声明
-
-感谢 OpenRA、XCC Mixer、ModEnc wiki、Project Perfect Mod、EA 以 GPL 许可证发布的
-《命令与征服》和《红色警戒》源码、World-Altering Editor、Final Alert、YRpp、Ares、Phobos，
-以及其他为此做出贡献的项目和社区。
-
-版权所有 © 2026 Halvor Nikolai Rusten 及 VERA20K 贡献者。本项目采用 [GPLv3](LICENSE-GPL) 许可证，并附有[附加条款](LEGAL.md#additional-terms)。本仓库不包含游戏文件。
-Command & Conquer 和 Red Alert 是 Electronic Arts Inc. 的商标，截图和应用图标（《红色警戒2》的红星）中的游戏美术资源归 Electronic Arts 所有。
-VERA20K 与 Electronic Arts 无隶属关系，也未获其认可。
-
-This product includes software developed by the [Ares Contributors](LICENSES/Ares.txt).
-
-This product includes software developed by the [Phobos Developers](docs/phobos.md#original-project-and-authors).
-
-**在分享、出售或复刻（fork）VERA20K 之前，请先阅读[法律声明](LEGAL.md)。**
-
-## 文档
-
-- [WebAssembly 预览版](docs/wasm.zh-CN.md)：在浏览器中运行的可选单人版本。
-- [模组制作指南](docs/modding.md)：模组能做什么、不能做什么，以及 VERA20K 与原版游戏的区别。
-- [INI 配置方案](docs/ini-roots.md)：选择规则、美术和 AI 文件。
-- [Ares](docs/ares.md)、[Phobos](docs/phobos.md) 和 [NPatch](docs/npatch.md)：扩展的支持情况与限制。
-- [引擎概览](docs/index.md)：代码结构以及引擎各部分如何协同工作。
-- [开发者工具](tools/README.md)：构建、测试和资源检查。
-- [地图测试](tools/map_observation.md)：脚本化场景、截图和对局观察。
-- [原版对比](tools/native_oracle.md)：将行为与原版游戏进行对比。
-- [Ghidra 工作流程](docs/ghidra-workflow.md)：分析原版引擎。
-
-本文件译自 [README.md](README.md)，请与英文版保持同步。
-
-</details>
+This product includes software developed by the Ares Contributors.
+This product includes software developed by the Phobos Developers. [Ares 许可证](LICENSES/Ares.txt) · [Phobos 开发者名单](docs/phobos.md#original-project-and-authors)

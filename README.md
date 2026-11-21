@@ -1,164 +1,74 @@
 # VERA Mod Engine
 
-[简体中文](README.zh-CN.md) · [中文产品说明书](docs/zh-CN/mod-engine-product-guide.md) · [Project issues](https://github.com/YuriPlanet/vera-mod-engine/issues)
+**English** · [简体中文](README.zh-CN.md) · [Deutsch](README.de.md)
 
-VERA Mod Engine is YuriPlanet’s development fork of VERA20K for Red Alert 2 mod and mission authors. Its proposed INI format lets a mod choose an RA2, Yuri’s Revenge, or versioned Ares preset and then define movement, projectiles, attach effects, and map triggers on a shared simulation.
+VERA Mod Engine is a Rust fork of VERA20K for *Red Alert 2* mod and mission authors, maintained independently by YuriPlanet. Its goal is to let authors keep a game’s rules, tech tree and missions while changing individual mechanics in INI. A mod based on RA2 could, for example, add an Ares-style slowing effect to one warhead and keep the rest of its combat rules intact.
 
-**Development status.** The design and INI inventories are available for review. The first implementation milestone compares the Grizzly Tank’s stock 105mm gun with a shell whose flight time and arc height can be configured independently. The initial source is [YuriPlanet/vera20k at 4b9af40](https://github.com/YuriPlanet/vera20k/commit/4b9af402654fd61ca6338aca9502071e6e2d4063).
+**Project status.** The repository contains the VERA20K engine, design specifications and three machine-readable indexes covering retail INI files, keys read by the original executables, and the Ares manual. The new presets and INI syntax described below are at the design stage.
 
-| Documentation | Contents |
-|---|---|
-| [Product manual](docs/zh-CN/mod-engine-product-guide.md) | Choosing an INI preset, a worked projectile example, and the legacy map import workflow |
-| [Gameplay specification](docs/zh-CN/composable-gameplay-design.md) | Object flags, filters, motion, effects, savegames, and lockstep |
-| [INI compatibility reference](docs/zh-CN/ini-preset-wrapping.md) | RA2, YR, and Ares readers, their differences, and three searchable source inventories |
-| [Implementation roadmap](docs/zh-CN/composable-gameplay-roadmap.md) | VERA code entry points, six playable milestones, and acceptance criteria |
-| [Upstream RFC feedback](docs/zh-CN/rfc-4653-feedback.md) | Attributed proposals, design differences, and open questions from [VERA20K PR #4653](https://github.com/YuriPlanet/vera20k/pull/4653) |
+## Compatibility targets
 
-The design documents are in Chinese. Compatibility reports belong in this fork’s issue tracker. Please identify the game or Ares version and include the relevant INI section or FinalAlert 2 trigger. [Open an issue](https://github.com/YuriPlanet/vera-mod-engine/issues)
+Each preset defines which files to load, how to interpret INI keys, and which numbered events and actions a mission can use. All three are designed to share movement, weapon fire, damage, attached effects (AE) and map triggers.
 
-<details>
-<summary>Upstream VERA20K README, including build and contributor information</summary>
+| Preset | Rules and missions | Compatibility reference |
+|---|---|---|
+| Red Alert 2 | `rules.ini`, `art.ini`, `ai.ini` and RA2 maps | Retail RA2 |
+| Yuri’s Revenge | `rulesmd.ini`, `artmd.ini`, `aimd.ini` and YR maps, including mode and map overrides | Retail YR campaigns and skirmishes |
+| Ares | YR definitions plus the selected Ares version’s INI keys, trigger numbers and changes to default behavior | YR 1.001 with Ares 3.0 or 3.0p1, each a separate reference |
 
-<img src="docs/images/new-conscirpt-hero-image.png" alt="VERA20K hero image" width="100%">
+In the proposed INI format, a trigger combines an event, a filter and an effect. For example, an electric field can give infantry and projectiles a temporary `Tesla` flag. A second trigger can then select either while the flag is active.
 
-<p align="center" dir="ltr">
-  <a href="README.vi.md" lang="vi">Tiếng Việt</a> · <a href="README.sv.md" lang="sv">Svenska</a> · <a href="README.zh-CN.md" lang="zh-CN">简体中文</a> · <a href="README.de.md" lang="de">Deutsch</a> · <a href="README.ar.md" lang="ar" dir="rtl">العربية</a> · <a href="README.es.md" lang="es">Español</a> · <a href="README.ja.md" lang="ja">日本語</a> · <a href="README.ru.md" lang="ru">Русский</a> · <a href="README.th.md" lang="th">ไทย</a> · <a href="README.tr.md" lang="tr">Türkçe</a> · <strong>English</strong>
-</p>
-<p align="center" dir="ltr">
-  <a href="https://github.com/YuriPlanet/vera20k/actions/workflows/linux.yml?query=branch%3Amain" title="Latest Linux library test run (run manually)"><img src="https://github.com/YuriPlanet/vera20k/actions/workflows/linux.yml/badge.svg?branch=main" alt="Linux library tests" height="23" align="middle"></a>
-  <a href="https://github.com/YuriPlanet/vera20k/actions/workflows/windows.yml?query=branch%3Amain" title="Latest Windows library test run (run manually)"><img src="https://github.com/YuriPlanet/vera20k/actions/workflows/windows.yml/badge.svg?branch=main" alt="Windows library tests" height="23" align="middle"></a>
-  <a href="https://discord.gg/kmjRUn5m5F"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Fv10%2Finvites%2FkmjRUn5m5F%3Fwith_counts%3Dtrue&amp;query=%24.approximate_presence_count&amp;suffix=%20online&amp;label=VERA20K%20Discord&amp;color=5865F2&amp;style=flat&amp;logo=discord&amp;logoColor=white" alt="Join Discord" height="23" align="middle"></a>
-  <img src="https://img.shields.io/badge/VERA20K_QQ-1097193563-1EBAFC?style=flat&amp;logo=qq&amp;logoColor=white" alt="QQ group (VERA20K)" height="23" align="middle">
-  <img src="https://img.shields.io/badge/ra20k.com_QQ-319832195-1EBAFC?style=flat&amp;logo=qq&amp;logoColor=white" alt="QQ group (ra20k.com)" height="23" align="middle">
-</p>
+The first authoring tools are planned around hand-written INI, INIWeaver templates and a field dictionary. Mod-authored WebAssembly modules are a later extension.
 
-<!-- Keep all translated READMEs in sync when changing the text below. -->
+## A timed shell trajectory
 
-# VERA20K
+The first milestone compares the Grizzly Tank’s stock `105mm` gun with a second gun on the same YR map. The second gun keeps the original warhead and gives its projectile the following proposed motion definition.
 
-VERA20K is a new engine for Red Alert 2: Yuri's Revenge. It plays like the original, with the same
-units, maps and look, and runs on Windows, macOS and Linux. It's built for bigger battles, with up
-to 30 players and 20,000 units on one map.
-
-VERA20K is made by gamers, for gamers, and gamers have the final say in where it goes.
-
-<img src="docs/images/vera20k-screenshots.png" alt="VERA20K skirmish setup screen and in-game view" width="100%">
-
-## Download and play
-
-1. Install Red Alert 2: Yuri's Revenge from Steam or the EA app.
-2. Download VERA20K for your system from the [releases page](https://github.com/YuriPlanet/vera20k/releases).
-3. Open the file you downloaded. It finds your game and sets up VERA20K in its own folder.
-
-Stuck? See the [help page](https://vera20k.org/help).
-
-## Project goals
-
-1. Keep the gameplay, visuals and atmosphere of the original Red Alert 2: Yuri's Revenge.
-2. Support bigger battles: up to **30 players** and **20,000 units** on 500×500 maps.
-3. Incorporate known RTS features and some never seen before.
-4. Integrated multiplayer client
-
-## Contributing
-
-Contributors can take responsibility for engine areas, with broad freedom to make changes that
-move VERA20K forward.
-
-Maintainers will help with review, integration and merging. You'll keep full credit for your
-contribution.
-
-Discussion is on [Discord](https://discord.gg/kmjRUn5m5F) and in the QQ group (1097193563).
-
-## Architecture
-
-The engine has three main parts:
-
-- **Simulation:** Owns gameplay state and logic.
-- **Rendering:** Draws terrain, units and buildings on the GPU using the original game's art.
-- **Application:** Handles input, menus, audio, and platform integration, connecting the systems.
-
-This separation supports deterministic gameplay.
-
-Arrows show data flow:
-
-![Application sends commands to simulation, which returns world state; application sends draw data to rendering.](docs/images/architecture.png)
-
-## Build and run
-
-You need:
-
-- **Rust and Git:** [Rust](https://rustup.rs/) 1.97 or later, installed with rustup, and
-  [Git](https://git-scm.com/).
-- **Build tools:** on Windows, the Visual Studio C++ build tools, which the Rust installer offers
-  to install; on macOS, `xcode-select --install`; on Debian and Ubuntu,
-  `sudo apt install build-essential libasound2-dev libxkbcommon-x11-0 pkg-config`.
-
-```sh
-git clone https://github.com/YuriPlanet/vera20k.git
-cd vera20k
-cp config.toml.example config.toml
-# Edit config.toml and set ra2_dir to your game folder before running:
-cargo run --release --bin vera20k
+```ini
+[Motion demo.HighArc]
+Goal=SnapshotAtStart
+Path=Line
+Pace=FixedTicks(60)
+Height=PeakAboveHigherEnd(192lepton)
+Facing=AlongPath
 ```
 
-## How we work
-
-Most of the code is written by AI coding agents. They use Ghidra to study the original
-engine, then port its behavior to Rust and check it with [comparison tools](tools/native_oracle.md)
-and playtesting. Agents follow [AGENTS.md](AGENTS.md).
-
-## Customization
-
-VERA20K uses the original Yuri's Revenge rules by default. In **Options**, you can change
-sound, graphics and controls or turn on VERA features. The game saves your preferences in
-`VERA.INI`, with VERA-specific options under `[VERA]`.
-
-Lobby settings, mods and maps can change the rules for a match. Mods and maps can enable supported
-[Ares](docs/ares.md) and [Phobos](docs/phobos.md) features through their INI files. A mod can also
-enable Ares by including `ares.mix`. Some Phobos features still require a build with `--features phobos`.
-
-To create a mod, start with the [modding guide](docs/modding.md).
-
-## Support
-
-<a href="https://paypal.me/vera20k"><img src="https://img.shields.io/badge/Donate_via_PayPal-FFC439?style=flat&amp;logo=paypal&amp;logoColor=003087" alt="Support VERA20K via PayPal" height="23"></a>
-
-All donations received are distributed
-to contributors according to the [TIBTRE contribution ledger](https://github.com/YuriPlanet/tibtre-ledger).
-
-Payouts to contributors:
-
-<p><img src="https://img.shields.io/badge/PayPal-003087?style=flat&amp;logo=paypal&amp;logoColor=white" alt="PayPal" height="23"> <img src="https://img.shields.io/badge/China_UnionPay-E21836?style=flat&amp;logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii02IC02IDI2OCAxNzIiPjxwYXRoIGQ9Ik01MC4wNDE2MzEsMC4wMDA2Njc1NjMzMDUgTDExMy44MjAyMTEsMC4wMDA2Njc1NjMzMDUgQzEyMi43MjMxMjcsMC4wMDA2Njc1NjMzMDUgMTI4LjI2MDQzOCw3LjI1NzMxMzQ1IDEyNi4xODM1NTgsMTYuMTg5NzY1NyBMOTYuNDkwMDcxNSwxNDMuNjc1NDE2IEM5NC4zOTQ1MzY1LDE1Mi41NzY3NzcgODUuNDgwNzM5LDE1OS44Mzk2NDEgNzYuNTcxNjA1LDE1OS44Mzk2NDEgTDEyLjc5OTI0MzMsMTU5LjgzOTY0MSBDMy45MDg3NjQsMTU5LjgzOTY0MSAtMS42NDA5ODQ0NCwxNTIuNTc2Nzc3IDAuNDM1ODk2MjA4LDE0My42NzU0MTYgTDMwLjE0MTgxODYsMTYuMTg5NzY1NyBDMzIuMjE4Njk5Myw3LjI1NzMxMzQ1IDQxLjEyNzgzMzMsMC4wMDA2Njc1NjMzMDUgNTAuMDQxNjMxLDAuMDAwNjY3NTYzMzA1IiBmaWxsPSIjRTIxODM2IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjxwYXRoIGQ9Ik0xMDguNTEzMjgzLDAuMDAwNjY3NTYzMzA1IEwxODEuODU3MDE4LDAuMDAwNjY3NTYzMzA1IEMxOTAuNzU4Mzc4LDAuMDAwNjY3NTYzMzA1IDE4Ni43NDQ1MjcsNy4yNTczMTM0NSAxODQuNjUwNTQ2LDE2LjE4OTc2NTcgTDE1NC45NjE3MjQsMTQzLjY3NTQxNiBDMTUyLjg3ODYyNSwxNTIuNTc2Nzc3IDE1My41Mjg0MjcsMTU5LjgzOTY0MSAxNDQuNjA4NDExLDE1OS44Mzk2NDEgTDcxLjI2NDY3NzUsMTU5LjgzOTY0MSBDNjIuMzQ0NjYxNSwxNTkuODM5NjQxIDU2LjgyNDQ0OTUsMTUyLjU3Njc3NyA1OC45MTk5ODUsMTQzLjY3NTQxNiBMODguNjA3MjUyNSwxNi4xODk3NjU3IEM5MC43MTUyMjQsNy4yNTczMTM0NSA5OS42MDU3MDM1LDAuMDAwNjY3NTYzMzA1IDEwOC41MTMyODMsMC4wMDA2Njc1NjMzMDUiIGZpbGw9IiMwMDQ0N0MiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI4IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8%2BPHBhdGggZD0iTTE3OC45NDc4MywwLjAwMDY2NzU2MzMwNSBMMjQyLjcyNjQwOSwwLjAwMDY2NzU2MzMwNSBDMjUxLjY0MTc2MiwwLjAwMDY2NzU2MzMwNSAyNTcuMTc5MDc0LDcuMjU3MzEzNDUgMjU1LjA4NTA5MywxNi4xODk3NjU3IEwyMjUuMzk2MjcxLDE0My42NzU0MTYgQzIyMy4zMDA3MzYsMTUyLjU3Njc3NyAyMTQuMzgwNzE5LDE1OS44Mzk2NDEgMjA1LjQ2NjkyMiwxNTkuODM5NjQxIEwxNDEuNzE3ODc5LDE1OS44Mzk2NDEgQzEzMi43OTc4NjMsMTU5LjgzOTY0MSAxMjcuMjY1MjE1LDE1Mi41NzY3NzcgMTI5LjM1NDUzMiwxNDMuNjc1NDE2IEwxNTkuMDQ4MDE3LDE2LjE4OTc2NTcgQzE2MS4xMjQ4OTksNy4yNTczMTM0NSAxNzAuMDI3ODE0LDAuMDAwNjY3NTYzMzA1IDE3OC45NDc4MywwLjAwMDY2NzU2MzMwNSIgZmlsbD0iIzAwN0I4NCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjgiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48L3N2Zz4%3D" alt="China UnionPay" height="23"> <img src="https://img.shields.io/badge/Alipay-1677FF?style=flat&amp;logo=alipay&amp;logoColor=white" alt="Alipay" height="23"> <img src="https://img.shields.io/badge/Vipps-FF5B24?style=flat&amp;logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjQzLjUgMjEuNSAyNyAyNyI%2BPHBhdGggZD0iTTU3LjMsNDAuNmMzLjcsMCw1LjgtMS44LDcuOC00LjRjMS4xLTEuNCwyLjUtMS43LDMuNS0wLjlzMS4xLDIuMywwLDMuN2MtMi45LDMuOC02LjYsNi4xLTExLjMsNi4xIGMtNS4xLDAtOS42LTIuOC0xMi43LTcuN2MtMC45LTEuMy0wLjctMi43LDAuMy0zLjRzMi41LTAuNCwzLjQsMUM1MC41LDM4LjMsNTMuNSw0MC42LDU3LjMsNDAuNnogTTY0LjIsMjguM2MwLDEuOC0xLjQsMy0zLDMgcy0zLTEuMi0zLTNzMS40LTMsMy0zQzYyLjgsMjUuMyw2NC4yLDI2LjYsNjQuMiwyOC4zeiIgZmlsbD0iI2ZmZiIvPjwvc3ZnPg%3D%3D" alt="Vipps" height="23"> <img src="https://img.shields.io/badge/SEPA-2D4B9A?style=flat&amp;logo=sepa&amp;logoColor=white" alt="SEPA" height="23"> <img src="https://img.shields.io/badge/Bitcoin-F7931A?style=flat&amp;logo=bitcoin&amp;logoColor=white" alt="Bitcoin" height="23"></p>
-
-## Credits and legal
-
-Thanks to OpenRA, XCC Mixer, the ModEnc wiki, Project Perfect Mod, EA's GPL source release of
-Command & Conquer and Red Alert, World-Altering Editor, Final Alert, YRpp, Ares, Phobos and
-many others.
-
-Copyright © 2026 Halvor Nikolai Rusten and VERA20K contributors.
-Licensed under the [GPLv3](LICENSE-GPL) with [additional terms](LEGAL.md#additional-terms).
-This repository contains no game files. Command &
-Conquer and Red Alert are trademarks of Electronic Arts Inc., and the screenshots and the app
-icon, Red Alert 2's red star, show game art owned by Electronic Arts. VERA20K is not affiliated
-with or endorsed by Electronic Arts.
-
-This product includes software developed by the [Ares Contributors](LICENSES/Ares.txt).
-
-This product includes software developed by the [Phobos Developers](docs/phobos.md#original-project-and-authors).
-
-**Read the [legal notice](LEGAL.md) before you share, sell or fork VERA20K.**
+With a clear path, the shell should reach the position recorded at launch after 60 simulation ticks. Changing `192lepton` adjusts the peak above the higher endpoint while preserving the flight time. To pass this milestone, a shell that strikes a bridge early must detonate exactly once. Loading a mid-flight save must reproduce the original impact tick. [Full weapon and projectile example](docs/zh-CN/mod-engine-product-guide.md#配置示例--分别设定飞行时间与弧高)
 
 ## Documentation
 
-- [WebAssembly preview](docs/wasm.md): an opt-in single-player build that runs in a browser.
-- [Modding guide](docs/modding.md): what mods can and can't do, and how VERA20K differs from the original game.
-- [INI profiles](docs/ini-roots.md): choosing rules, art and AI files.
-- [Ares](docs/ares.md), [Phobos](docs/phobos.md), [NPatch](docs/npatch.md) and [VeraX](docs/verax.md): extension support and limitations.
-- [Engine overview](docs/index.md): code layout and how the engine fits together.
-- [Developer tools](tools/README.md): builds, tests and asset inspection.
-- [Map testing](tools/map_observation.md): scripted scenarios, screenshots and match observations.
-- [Native comparisons](tools/native_oracle.md): comparing behavior with the original game.
-- [Ghidra workflow](docs/ghidra-workflow.md): inspecting the original engine.
+For the current engine, the English guides cover mod setup, local builds and testing. [Modding guide](docs/modding.md) · [Developer tools](tools/README.md)
 
-</details>
+The design specifications are in Simplified Chinese.
+
+- [Product manual and authoring examples](docs/zh-CN/mod-engine-product-guide.md)
+- [INI compatibility reference and source indexes](docs/zh-CN/ini-preset-wrapping.md)
+- [Gameplay specification for motion, rules and effects](docs/zh-CN/composable-gameplay-design.md)
+- [Implementation roadmap and acceptance criteria](docs/zh-CN/composable-gameplay-roadmap.md)
+- [Upstream RFC #4653 proposals, author responses and open questions](docs/zh-CN/rfc-4653-feedback.md)
+
+## Build and run
+
+The current desktop client reads assets from a local installation of *Yuri’s Revenge*. Install Git and stable Rust via rustup. Windows builds use the Visual Studio C++ Build Tools, and macOS builds use the Xcode Command Line Tools. On Debian or Ubuntu, install `build-essential`, `pkg-config`, `libasound2-dev` and `libxkbcommon-x11-0`. [Rust toolchain](rust-toolchain.toml)
+
+```sh
+git clone https://github.com/YuriPlanet/vera-mod-engine.git
+cd vera-mod-engine
+```
+
+Copy `config.toml.example` to `config.toml`. Under `[paths]`, set `ra2_dir` to your game installation directory, then start the client from the repository root.
+
+```sh
+cargo run --locked --profile fast --bin vera20k
+```
+
+## Contributing
+
+For a compatibility report, include the game and extension versions, the smallest INI section or FinalAlert 2 trigger that reproduces the issue, and what happens in the original game and in this fork. For an engine change, identify the affected behavior and the scenario that verifies it. [Project issues](https://github.com/YuriPlanet/vera-mod-engine/issues)
+
+## License and credits
+
+Copyright © 2026 Halvor Nikolai Rusten and VERA20K contributors. The engine code is distributed under GPLv3 with the project’s additional terms. Command & Conquer and Red Alert are trademarks of Electronic Arts Inc. [Upstream project](https://github.com/YuriPlanet/vera20k) · [GPLv3](LICENSE-GPL) · [Legal notice and additional terms](LEGAL.md#additional-terms)
+
+This product includes software developed by the Ares Contributors.
+This product includes software developed by the Phobos Developers. [Ares license](LICENSES/Ares.txt) · [Phobos credits](docs/phobos.md#original-project-and-authors)
