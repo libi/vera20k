@@ -1,4 +1,0 @@
-{
-  "extends": "@vera20k/sdk/tsconfig.base.json",
-  "include": ["src/**/*.ts"]
-}

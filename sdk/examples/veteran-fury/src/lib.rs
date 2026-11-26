@@ -16,7 +16,7 @@
 //!   most 500 credits.
 //!
 //! Build it with `cargo build --release`, rename the `.wasm` to
-//! `rules.wasm` and put it in a mod folder (docs/wasm-modules/guide.md).
+//! `rules.wasm` and put it in a mod folder (docs/wasm-modules.md).
 #![no_std]
 
 use vera20k_sdk::prelude::*;

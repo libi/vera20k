@@ -1,6 +1,0 @@
-{
-  "kind": "rules",
-  "vars": [
-    { "name": "AuraSeen", "scope": "object", "visibility": "private", "initial": 0 }
-  ]
-}

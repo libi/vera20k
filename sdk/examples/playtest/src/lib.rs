@@ -8,7 +8,7 @@
 //!
 //! Build it with `cargo build --release`, rename the `.wasm` to
 //! `rules.wasm` and put it in a mod folder, or embed it in a map with
-//! `asset wasm-embed` (docs/wasm-modules/guide.md).
+//! `asset wasm-embed` (docs/wasm-modules.md).
 #![no_std]
 
 use vera20k_sdk::prelude::*;
