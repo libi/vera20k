@@ -909,7 +909,10 @@ impl SpriteAtlas {
         if pictures.is_empty() {
             return;
         }
-        let max_side = device.limits().max_texture_dimension_2d;
+        let max_side = crate::render::picture_atlas::picture_page_side(
+            &pictures,
+            device.limits().max_texture_dimension_2d,
+        );
         let mut pages =
             crate::render::picture_atlas::pack_picture_pages(pictures, max_side).into_iter();
         while let Some(page) = pages.next() {
@@ -3747,7 +3750,7 @@ pub(crate) fn prepare_sprite_atlas(
     let picture_keys: Vec<usize> = (0..new_keys.len())
         .filter(|&index| art.is_some() && picture_of(index).is_some())
         .collect();
-    let mut picture_placements = crate::sim::parallel::map(&picture_keys, |&index| {
+    let picture_placements = crate::sim::parallel::map(&picture_keys, |&index| {
         let (key, palette_choice) = (&new_keys[index], palette_choices[index]);
         let (Some(source), Some(art)) = (picture_of(index), art) else {
             return None;
@@ -3775,8 +3778,31 @@ pub(crate) fn prepare_sprite_atlas(
             |count| shp_frame_index(key, count, infantry),
             ramp,
         )
-    })
-    .into_iter();
+    });
+    // A key whose picture was never decoded would otherwise vanish without a
+    // word: say so, once per picture.
+    let mut undecoded = std::collections::BTreeSet::new();
+    for (&index, placed) in picture_keys.iter().zip(&picture_placements) {
+        if placed.is_none()
+            && let Some(source) = picture_of(index)
+            && !pictures.is_decoded(source)
+        {
+            undecoded.insert((source.section.as_str(), source.decl.file.as_str()));
+        }
+    }
+    for (section, file) in undecoded {
+        log::warn!(
+            "[{section}] Picture={file} was not decoded for this atlas build; its keys draw nothing"
+        );
+    }
+    let placed_count = picture_placements.iter().flatten().count();
+    if !picture_keys.is_empty() {
+        log::info!(
+            "Sprite atlas pictures: {placed_count} keys placed, {} with nothing to draw",
+            picture_keys.len() - placed_count
+        );
+    }
+    let mut picture_placements = picture_placements.into_iter();
     // The decoded pictures are done with; freeing a map's worth of them takes
     // a while, so a worker does it.
     if picture_keys.is_empty() {

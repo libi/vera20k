@@ -820,6 +820,12 @@ impl PictureSources {
         )
     }
 
+    /// Whether [`Self::frames`] or [`Self::prefetch`] decoded `source` and it
+    /// can be drawn.
+    pub(crate) fn is_decoded(&self, source: &PictureSource) -> bool {
+        self.decoded_frames(source).is_some()
+    }
+
     /// `source`'s picture if [`Self::frames`] decoded it.
     fn decoded_frames(&self, source: &PictureSource) -> Option<&GamePictureFrames> {
         self.decoded.get(source).and_then(Option::as_ref)
@@ -1062,6 +1068,24 @@ pub(crate) fn mip_chain(rgba: Vec<u8>, size: [u32; 2], levels: u32) -> Vec<u8> {
     chain
 }
 
+/// The side picture pages are packed to: 4096, a 64 MiB RGBA page, so a
+/// map's worth of pictures spreads over many pages instead of one or two
+/// pages of a gigabyte each that the GPU must take in one upload; a larger
+/// sprite takes a page of its own size. Never above the device's
+/// `max_side`.
+pub(crate) const PICTURE_PAGE_SIDE: u32 = 4096;
+
+/// [`PICTURE_PAGE_SIDE`], or `pictures`' largest side above it, within
+/// `max_side`.
+pub(crate) fn picture_page_side(pictures: &[PlacedPicture], max_side: u32) -> u32 {
+    let largest = pictures
+        .iter()
+        .map(|picture| picture.sprite.size[0].max(picture.sprite.size[1]))
+        .max()
+        .unwrap_or(0);
+    PICTURE_PAGE_SIDE.max(largest).min(max_side)
+}
+
 /// Pack `pictures` onto pages no wider or taller than `max_side`, tallest
 /// first in shelves. A sprite larger than a page is left out, logged. The
 /// HD twins of art above 1x are not here: the zoomed draw makes them when it
@@ -1301,6 +1325,42 @@ pub(crate) mod tests {
         // Frame 0 sits on row 2 of the second page; nothing is beside frame 1.
         assert_eq!(pages[1].rgba[(2 * 3) * 4], 10);
         assert_eq!(pages[1].indices[2], 0);
+    }
+
+    /// More picture sprites than one page holds spread over as many pages
+    /// as they need, every one placed once; pages are 4096 square unless a
+    /// sprite is larger, and never past the device's limit.
+    #[test]
+    fn picture_sprites_beyond_one_page_all_get_pages() {
+        let sprite = |frame: u16, side: u32| {
+            placed(
+                frame,
+                PictureSprite {
+                    origin: [0, 0],
+                    size: [side, side],
+                    rgba: vec![9; (side * side * 4) as usize],
+                    indices: vec![LIT_INDEX; (side * side) as usize],
+                },
+            )
+        };
+        // Four 3x3 sprites fit an 8x8 page; twenty need five pages.
+        let pages = pack_picture_pages((0..20).map(|frame| sprite(frame, 3)).collect(), 8);
+        let mut frames: Vec<u16> = pages
+            .iter()
+            .flat_map(|page| page.sprites.iter().map(|(picture, _)| picture.key.frame))
+            .collect();
+        frames.sort_unstable();
+        assert_eq!(frames, (0..20).collect::<Vec<_>>());
+        assert_eq!(pages.len(), 5);
+        assert!(
+            pages
+                .iter()
+                .all(|page| page.size[0] <= 8 && page.size[1] <= 8)
+        );
+
+        assert_eq!(picture_page_side(&[sprite(0, 3)], 16384), PICTURE_PAGE_SIDE);
+        assert_eq!(picture_page_side(&[sprite(0, 5000)], 16384), 5000);
+        assert_eq!(picture_page_side(&[sprite(0, 3)], 2048), 2048);
     }
 
     /// A 4x picture is decoded to its game pixels only: its sprite keeps a
