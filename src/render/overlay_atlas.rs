@@ -1168,7 +1168,8 @@ fn render_rubble_picture(
 
 /// VERA-only (docs/picture-model-art.md): frame `frame` of a declared
 /// picture as `render_decoded_overlay_frame` gives an SHP frame: the stored
-/// frame's crop and placement, `y_offset` below it, no frame format bit. None
+/// frame's crop and placement, `y_offset` below it, the frame format its SHP
+/// would carry (`PictureSprite::stored_as_rle`). None
 /// for a frame past the end or with nothing drawn, as `resolve_body_frame`
 /// refuses an SHP's.
 fn render_picture_frame(
@@ -1178,6 +1179,7 @@ fn render_picture_frame(
     y_offset: f32,
 ) -> Option<RenderedOverlay> {
     let frame = frames.stored_frame(frame)?;
+    let extended = frame.sprite.stored_as_rle();
     Some(RenderedOverlay {
         key,
         width: frame.sprite.size[0],
@@ -1187,7 +1189,7 @@ fn render_picture_frame(
         offset_x: frame.offset[0],
         offset_y: frame.offset[1] + y_offset,
         draw_point_offset: frame.draw_point,
-        extended: false,
+        extended,
     })
 }
 

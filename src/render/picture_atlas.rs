@@ -78,6 +78,40 @@ pub(crate) struct PictureSprite {
     pub indices: Vec<u8>,
 }
 
+impl PictureSprite {
+    /// Whether an SHP of this frame stores it RLE-compressed (format 3,
+    /// format bit 0x02, the "extended" walker) rather than raw (format 1):
+    /// the shape tools keep the smaller, and an RLE row is its 2-byte length,
+    /// one byte a drawn pixel and two (`0x00`, count) a run of up to 255
+    /// holes. This picks each retail frame's format exactly (GI, ROCK,
+    /// FIRE01, EXPLOSML and NGPOWR_A checked frame by frame).
+    pub(crate) fn stored_as_rle(&self) -> bool {
+        let [width, height] = self.size.map(|side| side as usize);
+        let rle: usize = self
+            .indices
+            .chunks_exact(width.max(1))
+            .map(|row| {
+                let (mut bytes, mut run) = (2, 0);
+                for &index in row {
+                    if index == 0 {
+                        run += 1;
+                        if run == 255 {
+                            (bytes, run) = (bytes + 2, 0);
+                        }
+                    } else {
+                        if run > 0 {
+                            (bytes, run) = (bytes + 2, 0);
+                        }
+                        bytes += 1;
+                    }
+                }
+                bytes + if run > 0 { 2 } else { 0 }
+            })
+            .sum();
+        rle < width * height
+    }
+}
+
 /// VERA-only, experimental: a sprite's rectangle at the picture's own
 /// resolution, `scale` picture pixels per game pixel. Its RGBA is
 /// premultiplied (holes are 0, so filtering never darkens an edge) and its
@@ -645,10 +679,9 @@ pub(crate) struct PlacedPicture {
     pub sprite: PictureSprite,
     pub offset: [f32; 2],
     pub canvas_rect: [f32; 4],
-    /// The SHP frame format bit that lets the extended walker consume the
-    /// BUILDNGZ shape (`ShpSpriteEntry::extended`). A picture has no frame
-    /// format, so the caller sets it for the art whose SHP frames carry it:
-    /// building bodies and Buildup.
+    /// The SHP frame format bit (`ShpSpriteEntry::extended`) the frame's SHP
+    /// would carry ([`PictureSprite::stored_as_rle`]): it decides whether the
+    /// extended walker consumes BUILDNGZ and how the Z walk is seeded.
     pub extended: bool,
     /// VERA-only, experimental: for art above 1x, what makes its HD twin
     /// when the zoomed draw asks for it (`render::picture_hd`).
@@ -761,8 +794,8 @@ impl PictureSources {
                 top + sprite.origin[1] as f32,
             ],
             canvas_rect: [left, top, width as f32, height as f32],
+            extended: sprite.stored_as_rle(),
             sprite,
-            extended: false,
             hd,
         })
     }
@@ -1388,6 +1421,32 @@ pub(crate) mod tests {
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].size, [2, 1], "two game pixels, no gap");
         assert_eq!(pages[0].rgba.len(), 2 * 4);
+    }
+
+    /// A picture frame takes the format its SHP would store: RLE (the
+    /// extended walker) when the RLE rows are smaller than the raw
+    /// rectangle, as for an anim's sparse arcs, else raw, as for a dense
+    /// frame; a hole run longer than 255 takes two runs.
+    #[test]
+    fn a_picture_frame_takes_the_format_its_shp_would_store() {
+        let sprite = |size: [u32; 2], indices: Vec<u8>| PictureSprite {
+            origin: [0, 0],
+            size,
+            rgba: vec![0; indices.len() * 4],
+            indices,
+        };
+        // Dense: 2 + 4 bytes against 4 raw.
+        assert!(!sprite([4, 1], vec![LIT_INDEX; 4]).stored_as_rle());
+        // One drawn pixel and nine holes: 2 + 1 + 2 against 10.
+        let mut sparse = vec![0; 10];
+        sparse[0] = LIT_INDEX;
+        assert!(sprite([10, 1], sparse).stored_as_rle());
+        // Two drawn pixels around 300 holes: 2 + 1 + 2 + 2 + 1 = 8.
+        let mut long = vec![0; 302];
+        (long[0], long[301]) = (LIT_INDEX, LIT_INDEX);
+        assert!(sprite([302, 1], long).stored_as_rle());
+        // Three rows of 2 + 2 against 6 raw: the length words make it raw.
+        assert!(!sprite([2, 3], vec![LIT_INDEX; 6]).stored_as_rle());
     }
 
     /// Mips average premultiplied texels down to one per game pixel, so a
