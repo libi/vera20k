@@ -20,12 +20,22 @@ pub enum PictureError {
     NoFrames,
     #[error("{0} bytes of frames is more than the {PICTURE_BYTES_MAX} a picture may hold")]
     TooLarge(u64),
+    #[error("a {0}-byte frame is more than the {PICTURE_FRAME_BYTES_MAX} a frame may hold")]
+    FrameTooLarge(u64),
     #[error("a frame region outside the canvas")]
     FrameOutside,
 }
 
-/// The most decoded RGBA bytes one picture may hold, all frames together.
+/// The most decoded RGBA bytes [`PictureFrames::decode`] may hold, all
+/// frames together: the small pictures kept whole (the interface strips, a
+/// cameo, the placement preview). The atlas reads a picture one frame at a
+/// time instead ([`PictureFrameReader`]).
 pub const PICTURE_BYTES_MAX: u64 = 512 << 20;
+
+/// The most decoded RGBA bytes one frame's canvas may hold (8192 square):
+/// what a reader holds at once, about three canvases with its row buffer
+/// and an APNG Previous disposal's copy.
+pub const PICTURE_FRAME_BYTES_MAX: u64 = 256 << 20;
 
 /// A picture's frames composited onto its canvas, as an APNG viewer shows
 /// them: straight RGBA, row by row, `width * height * 4` bytes each.
@@ -42,6 +52,10 @@ impl PictureFrames {
     pub fn decode(bytes: &[u8]) -> Result<Self, PictureError> {
         let mut reader = PictureFrameReader::new(bytes)?;
         let (width, height) = reader.size();
+        let total = u64::from(width) * u64::from(height) * 4 * u64::from(reader.frame_count());
+        if total > PICTURE_BYTES_MAX {
+            return Err(PictureError::TooLarge(total));
+        }
         let mut frames = Vec::with_capacity(reader.frame_count() as usize);
         while let Some(frame) = reader.next_frame()? {
             frames.push(frame.to_vec());
@@ -73,9 +87,9 @@ pub struct PictureFrameReader<'a> {
 }
 
 impl<'a> PictureFrameReader<'a> {
-    /// The reader of `bytes`, its header read. Refuses a picture whose frames
-    /// together exceed [`PICTURE_BYTES_MAX`] decoded, as [`PictureFrames::decode`]
-    /// would hold them.
+    /// The reader of `bytes`, its header read. Refuses a picture whose canvas
+    /// exceeds [`PICTURE_FRAME_BYTES_MAX`] decoded: the reader holds one
+    /// frame, so the frame count is not bounded here.
     pub fn new(bytes: &'a [u8]) -> Result<Self, PictureError> {
         let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
         decoder.set_transformations(png::Transformations::normalize_to_color8());
@@ -88,16 +102,15 @@ impl<'a> PictureFrameReader<'a> {
             return Err(PictureError::NoFrames);
         }
         let canvas_bytes = u64::from(width) * u64::from(height) * 4;
-        let total = canvas_bytes * u64::from(frame_count);
-        if total > PICTURE_BYTES_MAX {
-            return Err(PictureError::TooLarge(total));
+        if canvas_bytes > PICTURE_FRAME_BYTES_MAX {
+            return Err(PictureError::FrameTooLarge(canvas_bytes));
         }
         let default_in_animation = animation.is_none() || info.frame_control.is_some();
         let mut buffer = vec![
             0;
             reader
                 .output_buffer_size()
-                .ok_or(PictureError::TooLarge(total))?
+                .ok_or(PictureError::FrameTooLarge(canvas_bytes))?
         ];
         if !default_in_animation {
             reader.next_frame(&mut buffer)?;
@@ -398,6 +411,56 @@ mod tests {
             1
         );
         assert!(PictureHeader::read(b"not a png").is_err());
+    }
+
+    /// `bytes` (a PNG or APNG) with its IHDR size, and its first frame
+    /// control's, set to `width` x `height`; no pixel data changes.
+    fn resized(mut bytes: Vec<u8>, width: u32, height: u32) -> Vec<u8> {
+        // Each chunk: length, type, data, CRC-32 of type and data (PNG 1.2,
+        // 5.3). The size sits at data offset 0 in IHDR, 4 in fcTL.
+        for (kind, at) in [(&b"IHDR"[..], 0), (&b"fcTL"[..], 4)] {
+            let Some(start) = bytes.windows(4).position(|window| window == kind) else {
+                continue;
+            };
+            let length = u32::from_be_bytes(bytes[start - 4..start].try_into().unwrap()) as usize;
+            let data = start + 4;
+            bytes[data + at..data + at + 4].copy_from_slice(&width.to_be_bytes());
+            bytes[data + at + 4..data + at + 8].copy_from_slice(&height.to_be_bytes());
+            let mut crc = !0u32;
+            for &byte in &bytes[start..data + length] {
+                crc ^= u32::from(byte);
+                for _ in 0..8 {
+                    crc = if crc & 1 != 0 {
+                        (crc >> 1) ^ 0xEDB8_8320
+                    } else {
+                        crc >> 1
+                    };
+                }
+            }
+            bytes[data + length..data + length + 4].copy_from_slice(&(!crc).to_be_bytes());
+        }
+        bytes
+    }
+
+    /// The reader holds one frame, so only the canvas is bounded: an APNG
+    /// whose frames together pass the whole-picture cap reads frame by frame
+    /// and is refused only where it would be kept whole; a canvas past the
+    /// frame cap is refused outright.
+    #[test]
+    fn pictures_are_bounded_per_frame_and_by_total_only_when_kept_whole() {
+        // 4096 square is 64 MiB a frame; 40 frames are 2.5 GiB.
+        let tall = resized(test_picture(1, 1, Some(40)), 4096, 4096);
+        let reader = PictureFrameReader::new(&tall).unwrap();
+        assert_eq!((reader.size(), reader.frame_count()), ((4096, 4096), 40));
+        assert!(matches!(
+            PictureFrames::decode(&tall),
+            Err(PictureError::TooLarge(_))
+        ));
+        let huge = resized(test_picture(1, 1, None), 16384, 16384);
+        assert!(matches!(
+            PictureFrameReader::new(&huge),
+            Err(PictureError::FrameTooLarge(_))
+        ));
     }
 
     /// Frames that cover part of the canvas composite as an APNG viewer

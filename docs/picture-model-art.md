@@ -149,6 +149,12 @@ declares `Picture=`; they take its `PictureSize=`.
 - Frames may be whole-canvas or the optimised regions with blend and dispose
   operations APNG tools write; the engine composites them.
 - Straight RGBA. A pixel at least half covered is drawn.
+- Size limits: a frame's canvas may take at most 256 MiB decoded (8192
+  square), since the atlas reads a picture one frame at a time; its frames
+  together may take at most 512 MiB at game pixels (`PictureSize=`). Art kept
+  whole (an interface picture, a cameo, the placement preview's HD strip)
+  may take at most 512 MiB decoded, all frames together. A picture past a
+  limit is reported in the game and draws nothing.
 
 ### Mask: `NAME.mask.png`
 

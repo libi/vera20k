@@ -212,7 +212,17 @@ pub(crate) enum PictureArtError {
         picture: [u32; 2],
         frames: usize,
     },
+    #[error(
+        "{0} bytes of frames at game pixels is more than the {GAME_FRAMES_BYTES_MAX} a picture may hold"
+    )]
+    GameTooLarge(u64),
 }
+
+/// The most RGBA bytes one picture's frames may take at game pixels, all
+/// frames together, which the atlas keeps while it builds (each frame is
+/// read and shrunk alone, so its own resolution is bounded per frame,
+/// `PICTURE_FRAME_BYTES_MAX`).
+pub(crate) const GAME_FRAMES_BYTES_MAX: u64 = crate::assets::picture_file::PICTURE_BYTES_MAX;
 
 /// The frames of one picture shrunk as they come ([`GamePictureFrames::shrink`]).
 struct Shrinker {
@@ -238,6 +248,10 @@ impl Shrinker {
                 picture: size,
                 canvas,
             });
+        }
+        let game_bytes = u64::from(canvas[0]) * u64::from(canvas[1]) * 4 * frames as u64;
+        if game_bytes > GAME_FRAMES_BYTES_MAX {
+            return Err(PictureArtError::GameTooLarge(game_bytes));
         }
         Ok(Self {
             width: size[0],
