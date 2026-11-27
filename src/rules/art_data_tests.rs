@@ -1859,11 +1859,47 @@ fn a_declared_picture_stands_in_for_the_shp_header_and_only_when_declared() {
     assert_eq!(boom.middle_frame, Some(6));
     assert_eq!(boom.raw_shp_height, Some(30), "PictureSize= height");
     let boom = art.get("BOOM").unwrap();
-    assert_eq!((boom.frame_width, boom.frame_height), (60, 30));
+    // 8x8 is no whole multiple of 60x30: the default frame size stays, as
+    // for a missing SHP.
+    assert_eq!((boom.frame_width, boom.frame_height), (30, 30));
 
     let plain = art.anim_runtime_config("PLAIN").unwrap();
     assert_eq!(plain.raw_shp_frame_count, Some(4), "the SHP, not PLAIN.png");
     assert_eq!(plain.raw_shp_height, Some(50));
+}
+
+/// A cratering picture's middle frame gives the smudge pick the size an SHP
+/// of the same art stores, its drawn rectangle in game pixels, never the
+/// `PictureSize=` canvas: a 4x picture on a 148x158 canvas whose middle
+/// frame draws 57x58 stays a small crater, as its SHP is.
+#[test]
+fn a_picture_crater_is_sized_by_its_middle_frame_not_its_canvas() {
+    let root = AnimDimTestRoot::new();
+    let (width, height) = (148 * 4, 158 * 4);
+    let blank = vec![0u8; (width * height * 4) as usize];
+    let mut middle = blank.clone();
+    // Game pixels 40..97 x 50..108 drawn: 57x58.
+    for y in 50 * 4..108 * 4 {
+        for x in 40 * 4..97 * 4 {
+            let at = ((y * width + x) * 4) as usize;
+            middle[at..at + 4].copy_from_slice(&[200, 100, 50, 255]);
+        }
+    }
+    let picture =
+        crate::assets::picture_file::encode_frames(width, height, &[blank.clone(), middle, blank])
+            .unwrap();
+    std::fs::write(root.path().join("boom.png"), &picture).unwrap();
+    let assets = crate::assets::asset_manager::AssetManager::from_loose_root_for_test(root.path());
+    let mut art = ArtRegistry::from_ini(&IniFile::from_str(
+        "[BOOM]\nPicture=boom.png\nPictureSize=148,158\nCrater=yes\n",
+    ));
+    art.populate_anim_frame_dims(&assets, "TEM", "TEMPERATE");
+    let boom = art.get("BOOM").unwrap();
+    assert_eq!((boom.frame_width, boom.frame_height), (57, 58));
+    assert!(!smudge_frame_is_large(
+        i32::from(boom.frame_width),
+        i32::from(boom.frame_height)
+    ));
 }
 
 /// A refused `PictureSize=` and a missing picture each become one line for

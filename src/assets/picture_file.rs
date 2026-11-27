@@ -219,6 +219,50 @@ impl<'a> PictureFrameReader<'a> {
     }
 }
 
+/// Game pixel `at` of a frame's straight RGBA `rgba`, `width` picture
+/// pixels a row, `scale` picture pixels per game pixel on each axis: drawn
+/// when at least half its picture pixels are (alpha at least half), its
+/// colour their mean; None for a hole. The coverage rule
+/// `render::picture_atlas` shrinks a picture by.
+fn game_pixel(rgba: &[u8], width: u32, scale: u32, [x, y]: [u32; 2]) -> Option<[u8; 3]> {
+    let (mut covered, mut sum) = (0u32, [0u32; 3]);
+    for dy in 0..scale {
+        for dx in 0..scale {
+            let at = (((y * scale + dy) * width + x * scale + dx) * 4) as usize;
+            if u32::from(rgba[at + 3]) * 2 >= 255 {
+                covered += 1;
+                for channel in 0..3 {
+                    sum[channel] += u32::from(rgba[at + channel]);
+                }
+            }
+        }
+    }
+    (covered * 2 >= scale * scale).then(|| sum.map(|total| ((total + covered / 2) / covered) as u8))
+}
+
+/// The drawn rectangle, origin and size in game pixels, of the frame `rgba`
+/// (`width` picture pixels a row) on a `canvas` of game pixels, `scale`
+/// picture pixels each ([`game_pixel`]): the rectangle a stored SHP frame
+/// keeps of the same art (`SHPStruct::GetFrameBounds`, `0x0069E7E0`). None
+/// when nothing is drawn.
+pub fn drawn_game_rect(
+    rgba: &[u8],
+    width: u32,
+    scale: u32,
+    canvas: [u32; 2],
+) -> Option<([u32; 2], [u32; 2])> {
+    let (mut left, mut top, mut right, mut bottom) = (u32::MAX, u32::MAX, 0, 0);
+    for y in 0..canvas[1] {
+        for x in 0..canvas[0] {
+            if game_pixel(rgba, width, scale, [x, y]).is_some() {
+                (left, top) = (left.min(x), top.min(y));
+                (right, bottom) = (right.max(x + 1), bottom.max(y + 1));
+            }
+        }
+    }
+    (left < right).then(|| ([left, top], [right - left, bottom - top]))
+}
+
 /// `w` x `h` decoded 8-bit samples of `color` as straight RGBA.
 fn to_rgba(samples: &[u8], color: png::ColorType, w: u32, h: u32) -> Vec<u8> {
     let pixels = (w * h) as usize;
@@ -287,23 +331,9 @@ impl PictureFrames {
         let mut out = Vec::with_capacity((size[0] * size[1] * 4) as usize);
         for y in 0..size[1] {
             for x in 0..size[0] {
-                let (mut covered, mut sum) = (0u32, [0u32; 3]);
-                for dy in 0..scale {
-                    for dx in 0..scale {
-                        let at = (((y * scale + dy) * self.width + x * scale + dx) * 4) as usize;
-                        if u32::from(rgba[at + 3]) * 2 >= 255 {
-                            covered += 1;
-                            for channel in 0..3 {
-                                sum[channel] += u32::from(rgba[at + channel]);
-                            }
-                        }
-                    }
-                }
-                if covered * 2 >= scale * scale {
-                    let mean = |channel: usize| ((sum[channel] + covered / 2) / covered) as u8;
-                    out.extend_from_slice(&[mean(0), mean(1), mean(2), 255]);
-                } else {
-                    out.extend_from_slice(&[0; 4]);
+                match game_pixel(rgba, self.width, scale, [x, y]) {
+                    Some([r, g, b]) => out.extend_from_slice(&[r, g, b, 255]),
+                    None => out.extend_from_slice(&[0; 4]),
                 }
             }
         }

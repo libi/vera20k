@@ -287,7 +287,7 @@ simulation reads art.
 |---|---|---|
 | Anim raw frame count (End/LoopEnd defaults, Middle = count/2, PsyDom, Lightning, flaming infantry) | `ArtRegistry::bind_one_anim_asset` (`427B50`) | APNG frame count (`acTL`), 1 for a plain PNG |
 | Anim canvas height (WeatherCon bolt Z) | same, `raw_shp_height` (`53A16B`) | `PictureSize` height |
-| Middle frame size (Crater/Scorch smudge size) | `ArtRegistry::populate_anim_frame_dims` (`424F00`) | `PictureSize` |
+| Middle frame size (Crater/Scorch smudge size) | `ArtRegistry::populate_anim_frame_dims` (`424F00`) | the middle frame's drawn rectangle in game pixels (`picture_file::drawn_game_rect`), the rectangle its SHP frame stores; never `PictureSize` |
 | Buildup frame count and presence (build/sell time, `CanSell`) | `buildup_asset_catalog` (`45F23E`) | the Buildup picture's frame count |
 | Body frame count (rubble) | `building_rubble` (`45F160`) | the body picture's frame count |
 | Body art present in this theater (random maps) | `map/rmg/tech_catalog` | the declared picture |

@@ -2608,6 +2608,39 @@ impl ArtRegistry {
         })
     }
 
+    /// VERA-only, experimental (docs/picture-model-art.md): the size of
+    /// `decl`'s middle frame (frame count / 2, as the SHP path takes
+    /// `frames.len() / 2`) as a stored SHP frame of the same art keeps it:
+    /// its drawn rectangle in game pixels (`picture_file::drawn_game_rect`),
+    /// 0x0 for an empty frame. None when the picture is missing, unreadable
+    /// or not a whole multiple of its canvas (the draw reports that).
+    fn picture_middle_frame_size(
+        &self,
+        section: &str,
+        decl: &PictureDecl,
+        asset_manager: &crate::assets::asset_manager::AssetManager,
+        theater_name: &str,
+    ) -> Option<[u32; 2]> {
+        let facts = self.picture_header(section, decl, asset_manager, theater_name)?;
+        let bytes = asset_manager.get_ref(&facts.file)?;
+        let mut reader = crate::assets::picture_file::PictureFrameReader::new(bytes).ok()?;
+        let (width, height) = reader.size();
+        let canvas = facts.size.map(|side| u32::try_from(side).unwrap_or(0));
+        let scale = width / canvas[0].max(1);
+        if scale == 0 || [width, height] != [canvas[0] * scale, canvas[1] * scale] {
+            return None;
+        }
+        let middle = reader.frame_count() / 2;
+        for _ in 0..middle {
+            reader.next_frame().ok()??;
+        }
+        let rgba = reader.next_frame().ok()??;
+        Some(
+            crate::assets::picture_file::drawn_game_rect(rgba, width, scale, canvas)
+                .map_or([0, 0], |(_, size)| size),
+        )
+    }
+
     /// Bind native loader-derived End/LoopEnd values for the transitive
     /// Next/Trailer closure rooted at the supplied animation names.
     ///
@@ -3069,15 +3102,18 @@ impl ArtRegistry {
             ))
         };
         for (name, image_id, sized) in pending {
-            // VERA-only, experimental: a picture's frames all have the
-            // canvas `PictureSize=` gives (docs/picture-model-art.md).
+            // VERA-only, experimental (docs/picture-model-art.md): a
+            // picture's middle frame gives the size an SHP's middle frame
+            // header would, its drawn rectangle in game pixels, never the
+            // `PictureSize=` canvas, so the art cannot change the smudge
+            // the simulation picks.
             if let Some(decl) = self.get(&name).and_then(|entry| entry.picture.clone()) {
-                match self.picture_header(&name, &decl, asset_manager, theater_name) {
-                    Some(facts) => {
+                match self.picture_middle_frame_size(&name, &decl, asset_manager, theater_name) {
+                    Some([width, height]) => {
                         let entry = self.get_mut(&name).unwrap();
-                        let side = |value: i32| u16::try_from(value).unwrap_or(u16::MAX);
-                        entry.frame_width = side(facts.size[0]);
-                        entry.frame_height = side(facts.size[1]);
+                        let side = |value: u32| u16::try_from(value).unwrap_or(u16::MAX);
+                        entry.frame_width = side(width);
+                        entry.frame_height = side(height);
                         populated += 1;
                     }
                     None => fallback += 1,
