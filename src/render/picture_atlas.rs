@@ -94,8 +94,12 @@ pub(crate) struct HdSprite {
 /// at its own resolution, the picture and its mask as the archive or folder
 /// holds them (a share of their storage, never decoded here).
 pub(crate) struct HdFiles {
-    /// The picture, which names it in a log line.
+    /// The picture as declared, which names it in a log line.
     pub source: PictureSource,
+    /// The file its 1x frames were decoded from, after the theater lookup
+    /// (`ArtRegistry::picture_candidates`): `picture` is its bytes, the very
+    /// share the 1x decode read, so the twin never comes from another file.
+    pub file: String,
     picture: SharedBytes,
     mask: Option<SharedBytes>,
     pub scale: u32,
@@ -105,6 +109,7 @@ impl std::fmt::Debug for HdFiles {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HdFiles")
             .field("source", &self.source)
+            .field("file", &self.file)
             .field("scale", &self.scale)
             .finish_non_exhaustive()
     }
@@ -865,15 +870,17 @@ fn decode_source(
         .into_iter()
         .find_map(|file| asset_manager.get_shared(&file).map(|bytes| (file, bytes)))?;
     let mask = asset_manager.get_shared(&mask_name(&file));
-    Some((file, GamePictureFrames::decode_files(source, bytes, mask)))
+    let decoded = GamePictureFrames::decode_files(source, &file, bytes, mask);
+    Some((file, decoded))
 }
 
 impl GamePictureFrames {
-    /// `source`'s `picture` file and its `mask` at game pixels, shrunk one
+    /// `source`'s `picture` file, named `file`, and its `mask` at game pixels, shrunk one
     /// frame at a time ([`Self::shrink_png`]). Art above 1x keeps where its
     /// frames are ([`HdFiles`]), for the zoomed draw.
     pub(crate) fn decode_files(
         source: &PictureSource,
+        file: &str,
         picture: SharedBytes,
         mask: Option<SharedBytes>,
     ) -> Result<Self, PictureArtError> {
@@ -881,6 +888,7 @@ impl GamePictureFrames {
         let hd_files = (frames.scale > 1).then(|| {
             Arc::new(HdFiles {
                 source: source.clone(),
+                file: file.to_owned(),
                 picture,
                 mask,
                 scale: frames.scale,
@@ -1179,7 +1187,7 @@ pub(crate) mod tests {
                 size: Some(canvas.map(|side| side as i32)),
             },
         };
-        GamePictureFrames::decode_files(&source, file(frames), mask.map(file)).unwrap()
+        GamePictureFrames::decode_files(&source, "boom.png", file(frames), mask.map(file)).unwrap()
     }
 
     /// A 2x picture shrinks onto its canvas: a game pixel is drawn when half

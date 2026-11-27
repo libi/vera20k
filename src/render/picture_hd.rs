@@ -20,7 +20,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, mpsc};
 
-use crate::render::picture_atlas::{HdFiles, HdTwin, PictureSource, mip_chain, mip_levels};
+use crate::render::picture_atlas::{HdFiles, HdTwin, mip_chain, mip_levels};
 use crate::render::picture_zoom::PictureHdPage;
 use crate::rules::house_colors::HouseColorIndex;
 
@@ -39,6 +39,11 @@ const TWINS_IN_FLIGHT: usize = 32;
 pub(crate) const IDLE_FRAMES: u32 = 1800;
 
 type TwinId = u32;
+
+/// What makes two requests the same twin: the file the 1x frames came from
+/// (never the name as declared, which the theater lookup may replace), its
+/// scale, the frame, the 1x rectangle and the house.
+type TwinKey = (String, u32, u32, [u32; 4], Option<HouseColorIndex>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TwinState {
@@ -131,7 +136,8 @@ fn page_bytes(size: [u32; 2], levels: u32) -> u64 {
 #[derive(Default)]
 pub(crate) struct PictureHdStore {
     twins: Vec<Twin>,
-    by_key: HashMap<(PictureSource, u32, Option<HouseColorIndex>), TwinId>,
+    /// One twin per resolved file, scale, frame, rectangle and house.
+    by_key: HashMap<TwinKey, TwinId>,
     /// Atlas entry (page, UV origin bits) → its twin and UV size.
     entries: HashMap<(usize, u32, u32), (TwinId, [f32; 2])>,
     /// Atlas pages with an entry above.
@@ -154,7 +160,8 @@ impl PictureHdStore {
     }
 
     /// Register the atlas entry on `page` at `uv_origin`, `uv_size` as drawn
-    /// from `twin`. Twins of the same picture, frame and house are one.
+    /// from `twin`. Twins of the same file, frame, rectangle and house are
+    /// one.
     pub(crate) fn register(
         &mut self,
         page: usize,
@@ -163,8 +170,10 @@ impl PictureHdStore {
         twin: HdTwin,
     ) {
         let key = (
-            twin.files.source.clone(),
+            twin.files.file.clone(),
+            twin.files.scale,
             twin.frame,
+            [twin.origin[0], twin.origin[1], twin.size[0], twin.size[1]],
             twin.house.as_ref().map(|(house, _)| *house),
         );
         let next = self.twins.len() as TwinId;
@@ -480,7 +489,7 @@ fn decode_twins(files: &HdFiles, mut twins: Vec<(TwinId, HdTwin)>) -> Vec<Decode
         log::warn!(
             "[{}] {}: its HD frames cannot be decoded ({error}); they draw at 1x",
             files.source.section,
-            files.source.decl.file
+            files.file
         );
     }
     // A frame the picture does not reach, or one after a failure.
@@ -562,6 +571,7 @@ fn write_level(
 mod tests {
     use super::*;
     use crate::assets::pal_file::Color;
+    use crate::render::picture_atlas::PictureSource;
     use crate::render::picture_atlas::tests::decoded;
     use crate::render::picture_atlas::{LIT_INDEX, RAMP_SIZE, UNLIT_INDEX};
 
@@ -606,6 +616,62 @@ mod tests {
         assert_eq!((*levels, *size), (2, [2, 2]));
         assert_eq!(mips[..16], [RED, NONE, RED, RED].concat());
         assert_eq!(indices[..], [LIT_INDEX, 0, LIT_INDEX, UNLIT_INDEX]);
+    }
+
+    /// A `NewTheater=yes` picture's twin is made from the file its 1x frames
+    /// came from: on a temperate map `NTNRCT.png` (here a link to the generic
+    /// `NGNRCT.png`), never the declared `NANRCT.png` (the snow variant).
+    #[test]
+    fn a_theater_substituted_picture_makes_its_twin_from_the_substituted_file() {
+        const GREEN: [u8; 4] = [0, 200, 0, 255];
+        const WHITE: [u8; 4] = [250, 250, 250, 255];
+        let root = std::env::temp_dir().join(format!("picture-hd-theater-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let png = |color: [u8; 4]| {
+            crate::assets::picture_file::encode_frames(2, 2, &[color.repeat(4)]).unwrap()
+        };
+        std::fs::write(root.join("NGNRCT.png"), png(GREEN)).unwrap();
+        std::fs::write(root.join("NANRCT.png"), png(WHITE)).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("NGNRCT.png"), root.join("NTNRCT.png")).unwrap();
+        #[cfg(not(unix))]
+        std::fs::copy(root.join("NGNRCT.png"), root.join("NTNRCT.png")).unwrap();
+        let assets = crate::assets::asset_manager::AssetManager::from_loose_root_for_test(&root);
+        let art = crate::rules::art_data::ArtRegistry::from_ini(
+            &crate::rules::ini_parser::IniFile::from_str(
+                "[NANRCT]\nNewTheater=yes\nPicture=NANRCT.png\nPictureSize=1,1\n",
+            ),
+        );
+        let source = PictureSource {
+            section: "NANRCT".into(),
+            decl: art.get("NANRCT").unwrap().picture.clone().unwrap(),
+        };
+        let mut pictures = crate::render::picture_atlas::PictureSources::default();
+        let frames = pictures
+            .frames(&source, &art, &assets, "TEMPERATE")
+            .unwrap();
+        let sprite = frames.sprite(0, None).unwrap();
+        assert_eq!(sprite.rgba, GREEN, "the 1x frame is the temperate file's");
+        let twin = frames.hd_twin(0, &sprite, None).unwrap();
+        assert_eq!(twin.files.file, "NTNRCT.png");
+        let files = Arc::clone(&twin.files);
+        let made = decode_twins(&files, vec![(0, twin)]);
+        let _ = std::fs::remove_dir_all(&root);
+        let [
+            Decoded {
+                pixels: Some((_, _, mips, _)),
+                ..
+            },
+        ] = &made[..]
+        else {
+            panic!("one twin made");
+        };
+        assert_eq!(
+            mips[..16],
+            GREEN.repeat(4)[..],
+            "the twin is the temperate file's too"
+        );
     }
 
     /// Houses share the twin of a frame with no house-colour pixel at the
