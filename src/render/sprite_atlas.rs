@@ -745,9 +745,13 @@ pub struct SpriteAtlas {
     /// VERA-only, experimental: the RGBA picture pages among `pages`
     /// (`render::picture_atlas`), which bind no palette rows.
     picture_pages: HashSet<usize>,
-    /// VERA-only, experimental: the HD twins of the picture pages of art
-    /// above 1x, by page (`render::picture_zoom`). Empty without such art.
+    /// VERA-only, experimental: the HD twins drawn on the GPU at the same UV
+    /// as their page, by page: the model page's (`render::model_draw`).
     picture_hd_pages: HashMap<usize, crate::render::picture_zoom::PictureHdPage>,
+    /// VERA-only, experimental: the picture sprites above 1x and the HD
+    /// twins the zoomed draw has asked for (`render::picture_hd`). Empty
+    /// without such art.
+    picture_hd: crate::render::picture_hd::PictureHdStore,
     /// VERA-only, experimental: the RGBA page among `pages` that declared
     /// models are drawn on each frame (`render::model_draw`), once one is.
     model_page: Option<usize>,
@@ -826,14 +830,46 @@ impl SpriteAtlas {
             palettes,
             picture_pages: HashSet::new(),
             picture_hd_pages: HashMap::new(),
+            picture_hd: Default::default(),
             model_page: None,
         }
     }
 
     /// VERA-only, experimental (`docs/picture-model-art.md`): whether any
-    /// picture page has an HD twin, which the zoomed draw needs.
+    /// page has an HD twin or any picture sprite can have one, which the
+    /// zoomed draw needs.
     pub(crate) fn has_picture_hd_pages(&self) -> bool {
-        !self.picture_hd_pages.is_empty()
+        !self.picture_hd_pages.is_empty() || self.picture_hd.has_twins()
+    }
+
+    /// VERA-only, experimental: the picture sprites' HD twins
+    /// (`render::picture_hd`).
+    pub(crate) fn picture_hd(&self) -> &crate::render::picture_hd::PictureHdStore {
+        &self.picture_hd
+    }
+
+    pub(crate) fn picture_hd_mut(&mut self) -> &mut crate::render::picture_hd::PictureHdStore {
+        &mut self.picture_hd
+    }
+
+    /// VERA-only, experimental: the HD page, and the UV rectangle (origin,
+    /// size) on it, that draw an instance of page `page` at `uv_origin`,
+    /// `uv_size` at its own resolution: the page's twin at the same UV, or
+    /// its picture sprite's HD twin, which is asked for when not ready
+    /// (`PictureHdStore::lookup`).
+    pub(crate) fn hd_twin_of(
+        &mut self,
+        page: usize,
+        uv_origin: [f32; 2],
+        uv_size: [f32; 2],
+    ) -> Option<(crate::render::picture_zoom::HdSource, [f32; 4])> {
+        use crate::render::picture_zoom::HdSource;
+        if self.picture_hd_pages.contains_key(&page) {
+            let own = [uv_origin[0], uv_origin[1], uv_size[0], uv_size[1]];
+            return Some((HdSource::Atlas(page), own));
+        }
+        let (hd, uv) = self.picture_hd.lookup(page, uv_origin, uv_size)?;
+        Some((HdSource::Streamed { hd, page }, uv))
     }
 
     /// VERA-only, experimental: install or remove page `page`'s HD twin
@@ -910,22 +946,22 @@ impl SpriteAtlas {
             self.pages.push(SpriteAtlasPage { texture });
             self.picture_pages.insert(index);
             // The zoomed draw reads depth, which the WebGL2 fallback cannot.
-            if let Some(hd) = &page.hd
-                && !crate::render::gpu::webgl_fallback(device)
-            {
-                self.picture_hd_pages.insert(
-                    index,
-                    crate::render::picture_zoom::PictureHdPage::new(device, queue, hd),
-                );
-            }
+            let hd = !crate::render::gpu::webgl_fallback(device);
             let [width, height] = page.size.map(|side| side as f32);
             for (picture, [x, y]) in page.sprites {
                 let [w, h] = picture.sprite.size.map(|side| side as f32);
+                let (uv_origin, uv_size) = (
+                    [x as f32 / width, y as f32 / height],
+                    [w / width, h / height],
+                );
+                if let Some(twin) = picture.hd.filter(|_| hd) {
+                    self.picture_hd.register(index, uv_origin, uv_size, twin);
+                }
                 self.entries.insert(
                     picture.key,
                     ShpSpriteEntry {
-                        uv_origin: [x as f32 / width, y as f32 / height],
-                        uv_size: [w / width, h / height],
+                        uv_origin,
+                        uv_size,
                         pixel_size: [w, h],
                         offset_x: picture.offset[0],
                         offset_y: picture.offset[1],

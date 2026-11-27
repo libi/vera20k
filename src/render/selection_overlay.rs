@@ -263,8 +263,8 @@ impl CenteredShapeStrip {
             assets.get_ref(name)
         })
         .and_then(|found| found.game_frames());
-        if let Some(frames) = picture {
-            return Self::from_picture_on_device(device, queue, batch, &frames, None);
+        if let Some((frames, hd)) = picture {
+            return Self::from_picture_on_device(device, queue, batch, &frames, hd.as_ref(), None);
         }
         let palette = Palette::from_bytes(assets.get_ref(pal_name)?).ok()?;
         Self::from_shp_on_device(device, queue, batch, &shp, &palette)
@@ -348,24 +348,22 @@ impl CenteredShapeStrip {
     /// pixels, house-colour pixels in `ramp`. Each frame is its drawn
     /// rectangle at the origin a stored SHP frame has, centred by the
     /// `PictureSize=` canvas; an empty frame draws nothing, as an SHP's.
-    /// Art above 1x also gets its HD twin, with one empty pixel between
-    /// frames so the twin's filtering stays inside each frame. The Phobos
-    /// placement preview and the interface pictures call it.
+    /// Art above 1x also gets its HD twin from `hd`, its frames at their own
+    /// resolution, with one empty pixel between frames so the twin's
+    /// filtering stays inside each frame. The Phobos placement preview and
+    /// the interface pictures call it.
     pub(crate) fn from_picture_on_device(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         batch: &BatchRenderer,
         picture: &crate::render::picture_atlas::GamePictureFrames,
+        hd: Option<&crate::render::picture_atlas::HdFrames>,
         ramp: Option<&[crate::assets::pal_file::Color; crate::render::picture_atlas::RAMP_SIZE]>,
     ) -> Option<Self> {
         let sprites: Vec<_> = (0..picture.frame_count())
             .map(|frame| picture.sprite(frame, ramp))
             .collect();
-        let scale = sprites
-            .iter()
-            .flatten()
-            .find_map(|sprite| sprite.hd.as_ref().map(|hd| hd.scale))
-            .unwrap_or(1);
+        let scale = hd.map_or(1, |hd| hd.scale());
         let gap = u32::from(scale > 1);
         let atlas_w: u32 = sprites
             .iter()
@@ -393,7 +391,7 @@ impl CenteredShapeStrip {
         let (mut hd_rgba, mut hd_indices) = (vec![0u8; hd_pixels * 4], vec![0u8; hd_pixels]);
         let mut frames = Vec::with_capacity(sprites.len());
         let mut x = 0;
-        for sprite in &sprites {
+        for (frame, sprite) in sprites.iter().enumerate() {
             let Some(sprite) = sprite else {
                 frames.push(CenteredShapeFrame {
                     x,
@@ -413,7 +411,7 @@ impl CenteredShapeStrip {
                 rgba[dst * 4..(dst + row) * 4]
                     .copy_from_slice(&sprite.rgba[src * 4..(src + row) * 4]);
             }
-            if let Some(hd) = &sprite.hd {
+            if let Some(hd) = hd.and_then(|hd| hd.sprite(frame, sprite, ramp)) {
                 let row = hd.size[0] as usize;
                 for py in 0..hd.size[1] {
                     let src = (py * hd.size[0]) as usize;
@@ -441,7 +439,7 @@ impl CenteredShapeStrip {
                 rgba: hd_rgba,
                 indices: hd_indices,
             };
-            crate::render::picture_zoom::PictureHdPage::new(device, queue, &page)
+            crate::render::picture_zoom::PictureHdPage::new(device, queue, page)
         });
         Some(Self {
             texture: batch.create_texture_on_device(

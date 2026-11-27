@@ -3,11 +3,13 @@
 //!
 //! The world draws every picture at `PictureSize=` game pixels, in native
 //! order with everything else, and the wheel zoom or the Options zoom then
-//! magnifies it. Art above 1x keeps an HD twin of each of its atlas pages
-//! (`picture_atlas::HdPage`) at the same normalised coordinates, so a world
-//! instance's UV addresses its HD rectangle unchanged. After the
-//! magnification this pass draws each opaque world instance from such a page
-//! again, from the twin, at the target's resolution. Its shader
+//! magnifies it. Art above 1x has HD twins of its sprites, made when this
+//! pass first needs them (`render::picture_hd`), each instance's HD UV
+//! rectangle beside it; the interface strips and the model page keep twins
+//! of their pages at the same normalised coordinates, where the HD UV is the
+//! instance's own. After the magnification this pass draws each opaque
+//! world instance with a twin again, from the twin, at the target's
+//! resolution; one whose twin is not ready keeps its magnified pixels. Its shader
 //! (`picture_zoom.wgsl`) maps each target pixel back to the world pixel it
 //! shows, computes that pixel's native Z as the zsprite shader does and
 //! compares it with the world's own depth there (no copied depth), so the
@@ -28,8 +30,9 @@
 //! world's, in the order the world drew them.
 //!
 //! Nothing here exists, allocates or walks anything unless the sprite atlas
-//! or an interface strip has an HD page (`SpriteAtlas::has_picture_hd_pages`,
-//! `SelectionOverlay::has_hd_pages`, `BeaconArt::has_hd_pages`).
+//! has art with HD twins or an interface strip has an HD page
+//! (`SpriteAtlas::has_picture_hd_pages`, `SelectionOverlay::has_hd_pages`,
+//! `BeaconArt::has_hd_pages`).
 
 use crate::render::batch::{
     BatchRenderer, BatchTexture, SPRITE_INSTANCE_ATTRIBUTES, SpriteInstance,
@@ -51,14 +54,14 @@ impl PictureHdPage {
         Self { color, indices }
     }
 
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue, page: &HdPage) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue, page: HdPage) -> Self {
         use wgpu::util::DeviceExt;
         let size = wgpu::Extent3d {
             width: page.size[0],
             height: page.size[1],
             depth_or_array_layers: 1,
         };
-        let (chain, levels) = page.mip_chain();
+        let (chain, levels, indices) = page.into_mips();
         let texture = |label, format, mip_level_count, data: &[u8]| {
             device
                 .create_texture_with_data(
@@ -91,7 +94,7 @@ impl PictureHdPage {
                 "Picture HD page indices",
                 wgpu::TextureFormat::R8Uint,
                 1,
-                &page.indices,
+                &indices,
             ),
         }
     }
@@ -111,8 +114,12 @@ pub(crate) enum HdDepth {
 /// The page a run of HD instances draws from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HdSource {
-    /// A sprite atlas page with a twin (`SpriteAtlas::picture_hd_page`).
+    /// A sprite atlas page with a twin at its own UV
+    /// (`SpriteAtlas::picture_hd_page`: the model page).
     Atlas(usize),
+    /// Picture HD page `hd` (`render::picture_hd`), for instances the world
+    /// drew from atlas page `page`.
+    Streamed { hd: usize, page: usize },
     /// An interface strip drawn from a picture.
     Interface(crate::render::selection_overlay::InterfaceStrip),
 }
@@ -190,9 +197,16 @@ pub(crate) struct PictureZoomPass {
     /// Bound as both mask textures where there is no mask.
     no_mask: wgpu::TextureView,
     instances: Option<wgpu::Buffer>,
+    /// Each instance's UV rectangle on its HD page (origin, size).
+    hd_uvs: Option<wgpu::Buffer>,
     runs: Vec<HdRun>,
     target: HdTarget,
 }
+
+/// The instance attributes picture_zoom.wgsl reads; the HD UV rectangle
+/// takes location 4, the depth it does not read.
+const HD_UV_LOCATION: u32 = 4;
+const READ_LOCATIONS: [u32; 11] = [0, 1, 2, 3, 5, 6, 8, 11, 12, 13, 14];
 
 impl PictureZoomPass {
     pub(crate) fn new(
@@ -265,17 +279,34 @@ impl PictureZoomPass {
             ],
             immediate_size: 0,
         });
+        let attributes: Vec<wgpu::VertexAttribute> = SPRITE_INSTANCE_ATTRIBUTES
+            .iter()
+            .filter(|attribute| READ_LOCATIONS.contains(&attribute.shader_location))
+            .copied()
+            .collect();
+        let hd_uv = [wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: 0,
+            shader_location: HD_UV_LOCATION,
+        }];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Picture HD pipeline"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<SpriteInstance>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &SPRITE_INSTANCE_ATTRIBUTES,
-                })],
+                buffers: &[
+                    Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<SpriteInstance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &attributes,
+                    }),
+                    Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<[f32; 4]>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &hd_uv,
+                    }),
+                ],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -347,39 +378,49 @@ impl PictureZoomPass {
             params_stride,
             no_mask,
             instances: None,
+            hd_uvs: None,
             runs: Vec::new(),
             target: HdTarget::Frame,
         }
     }
 
-    /// This frame's HD `instances`, drawn in `runs`, for `target`.
+    /// This frame's HD `instances` with their HD UV rectangles `hd_uvs`,
+    /// drawn in `runs`, for `target`.
     pub(crate) fn set_frame(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         instances: &[SpriteInstance],
+        hd_uvs: &[[f32; 4]],
         runs: Vec<HdRun>,
         target: HdTarget,
     ) {
-        let bytes: &[u8] = bytemuck::cast_slice(instances);
-        let needed = (bytes.len() as u64).max(1);
-        if self
-            .instances
-            .as_ref()
-            .is_none_or(|buffer| buffer.size() < needed)
-        {
-            self.instances = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Picture HD instances"),
-                size: needed.next_power_of_two().max(4096),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-        }
-        if let Some(buffer) = &self.instances
-            && !bytes.is_empty()
-        {
-            queue.write_buffer(buffer, 0, bytes);
-        }
+        let upload = |buffer: &mut Option<wgpu::Buffer>, label, bytes: &[u8]| {
+            let needed = (bytes.len() as u64).max(1);
+            if buffer.as_ref().is_none_or(|buffer| buffer.size() < needed) {
+                *buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: needed.next_power_of_two().max(4096),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
+            }
+            if let Some(buffer) = buffer
+                && !bytes.is_empty()
+            {
+                queue.write_buffer(buffer, 0, bytes);
+            }
+        };
+        upload(
+            &mut self.instances,
+            "Picture HD instances",
+            bytemuck::cast_slice(instances),
+        );
+        upload(
+            &mut self.hd_uvs,
+            "Picture HD UV rectangles",
+            bytemuck::cast_slice(hd_uvs),
+        );
         self.runs = runs;
         self.target = target;
     }
@@ -415,7 +456,7 @@ impl PictureZoomPass {
         zshape: &wgpu::BindGroup,
         scissor: [u32; 4],
     ) {
-        let Some(buffer) = &self.instances else {
+        let (Some(buffer), Some(hd_uvs)) = (&self.instances, &self.hd_uvs) else {
             return;
         };
         if self.runs.is_empty() || placement.scale <= 1.0 {
@@ -542,6 +583,7 @@ impl PictureZoomPass {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(3, zshape, &[]);
         pass.set_vertex_buffer(0, buffer.slice(..));
+        pass.set_vertex_buffer(1, hd_uvs.slice(..));
         pass.set_scissor_rect(x, y, width, height);
         for run in &self.runs {
             let Some((_, group)) = page_groups.iter().find(|(page, _)| *page == run.page) else {

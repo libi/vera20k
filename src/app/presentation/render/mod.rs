@@ -1078,7 +1078,7 @@ pub(crate) fn render_game(
     // drawn again after the magnification, from the lowered runs.
     picture_zoom::prepare(
         &mut state.renderer,
-        &state.match_state.match_presentation,
+        &mut state.match_state.match_presentation,
         &state.frontend.screen,
         &world.object_layers,
         &ui.beacons,

@@ -3,8 +3,10 @@
 //! (`render::picture_zoom`).
 //!
 //! Once per frame, from the lowered object runs, every opaque world instance
-//! drawn from a picture page with an HD twin is copied, unchanged: the twin
-//! sits at the same UV. The world pass still draws the 1x copy in native
+//! drawn from a picture sprite whose HD twin is on the GPU is copied,
+//! unchanged, with its UV rectangle on the twin's page; one whose twin is
+//! not is asked for (`render::picture_hd`) and keeps its magnified 1x pixels
+//! until it is. The world pass still draws the 1x copy in native
 //! order; the HD copy goes over it, where the world still shows that copy,
 //! after the magnification, into the frame
 //! after `WorldZoomPass::composite`, or into the window after
@@ -52,6 +54,10 @@ fn hd_page(
             let atlas = presentation.sprite_atlas.as_ref()?;
             return Some((atlas.picture_hd_page(page)?, &atlas.page(page)?.texture));
         }
+        HdSource::Streamed { hd, page } => {
+            let atlas = presentation.sprite_atlas.as_ref()?;
+            return Some((atlas.picture_hd().page(hd)?, &atlas.page(page)?.texture));
+        }
         HdSource::Interface(InterfaceStrip::Beacon(house)) => {
             presentation.beacon_art.as_ref()?.tactical_strip(house)?
         }
@@ -82,7 +88,7 @@ pub(super) fn needs_world_pass(
 /// magnified or nothing draws from an HD page.
 pub(super) fn prepare(
     renderer: &mut RendererState,
-    presentation: &MatchPresentationState,
+    presentation: &mut MatchPresentationState,
     screen: &GameScreen,
     layers: &[ObjectLayerPass; 5],
     beacons: &[Vec<SpriteInstance>],
@@ -106,22 +112,38 @@ pub(super) fn prepare(
         })
     });
     let Some(target) = target else {
+        if let Some(atlas) = presentation.sprite_atlas.as_mut() {
+            atlas.picture_hd_mut().idle();
+        }
         clear(renderer);
         return;
     };
+    let gpu = &renderer.gpu;
     let mut list = HdList::default();
-    world_instances(&mut list, layers, |page| {
-        hd_page(presentation, HdSource::Atlas(page)).is_some()
-    });
+    if let Some(atlas) = presentation.sprite_atlas.as_mut() {
+        // Upload what is ready, find each instance's twin, ask for those
+        // missing.
+        atlas
+            .picture_hd_mut()
+            .begin_frame(Some((&gpu.device, &gpu.queue)));
+        world_instances(&mut list, layers, |page, instance| {
+            atlas.hd_twin_of(page, instance.uv_origin, instance.uv_size)
+        });
+        atlas.picture_hd_mut().dispatch();
+    }
+    let presentation = &*presentation;
     interface_instances(&mut list, layers, beacons, placement, |strip| {
         hd_page(presentation, HdSource::Interface(strip)).is_some()
     });
-    let HdList { instances, runs } = list;
+    let HdList {
+        instances,
+        hd_uvs,
+        runs,
+    } = list;
     if runs.is_empty() {
         clear(renderer);
         return;
     }
-    let gpu = &renderer.gpu;
     let pass = renderer.picture_zoom.get_or_insert_with(|| {
         PictureZoomPass::new(
             &gpu.device,
@@ -130,7 +152,7 @@ pub(super) fn prepare(
             &renderer.batch_renderer,
         )
     });
-    pass.set_frame(&gpu.device, &gpu.queue, &instances, runs, target);
+    pass.set_frame(&gpu.device, &gpu.queue, &instances, &hd_uvs, runs, target);
 }
 
 fn clear(renderer: &mut RendererState) {
@@ -139,22 +161,29 @@ fn clear(renderer: &mut RendererState) {
     }
 }
 
-/// The instances to draw again, in runs.
+/// The instances to draw again, their UV rectangles on their HD pages, in
+/// runs.
 #[derive(Default)]
 struct HdList {
     instances: Vec<SpriteInstance>,
+    hd_uvs: Vec<[f32; 4]>,
     runs: Vec<HdRun>,
 }
 
 impl HdList {
-    /// Add `instance` when it is opaque, extending the last run when it has
-    /// the same page, Z test and camera.
-    fn push(&mut self, page: HdSource, depth: HdDepth, neutral_a: bool, instance: &SpriteInstance) {
-        if !opaque(instance) {
-            return;
-        }
+    /// Add `instance`, `hd_uv` on its HD page, extending the last run when
+    /// it has the same page, Z test and camera.
+    fn push(
+        &mut self,
+        page: HdSource,
+        depth: HdDepth,
+        neutral_a: bool,
+        instance: &SpriteInstance,
+        hd_uv: [f32; 4],
+    ) {
         let at = self.instances.len() as u32;
         self.instances.push(*instance);
+        self.hd_uvs.push(hd_uv);
         match self.runs.last_mut() {
             Some(last)
                 if last.page == page
@@ -177,14 +206,14 @@ impl HdList {
 
 /// The world instances to draw again from an HD page, in the world's order:
 /// the building bases (`ObjectDrawPhase::BuildingBase`, drawn from layer 2),
-/// then layers 0 to 4. Only opaque stores to an SHP page whose page
-/// `has_hd`; translucent, FX, packed and linear-shape draws keep their 1x
-/// pixels (`merge_passes::restarts_shadow_count` names the same opaque
-/// stores).
+/// then layers 0 to 4. Only opaque stores to an SHP page for which `hd`
+/// gives an HD page and UV rectangle; translucent, FX, packed and
+/// linear-shape draws keep their 1x pixels
+/// (`merge_passes::restarts_shadow_count` names the same opaque stores).
 fn world_instances(
     list: &mut HdList,
     layers: &[ObjectLayerPass; 5],
-    has_hd: impl Fn(usize) -> bool,
+    mut hd: impl FnMut(usize, &SpriteInstance) -> Option<(HdSource, [f32; 4])>,
 ) {
     let bases = layers[2]
         .building_base_runs
@@ -204,9 +233,6 @@ fn world_instances(
         else {
             continue;
         };
-        if !has_hd(page) {
-            continue;
-        }
         let depth = match render_z {
             RenderZPolicy::None => HdDepth::None,
             RenderZPolicy::ReadOnly => HdDepth::Less,
@@ -218,8 +244,10 @@ fn world_instances(
         else {
             continue;
         };
-        for instance in drawn {
-            list.push(HdSource::Atlas(page), depth, false, instance);
+        for instance in drawn.iter().filter(|instance| opaque(instance)) {
+            if let Some((source, uv)) = hd(page, instance) {
+                list.push(source, depth, false, instance, uv);
+            }
         }
     }
 }
@@ -239,13 +267,22 @@ fn interface_instances(
 ) {
     let mut push = |strip: InterfaceStrip, neutral_a: bool, instance: Option<&SpriteInstance>| {
         if let Some(instance) = instance
+            && opaque(instance)
             && has_hd(strip)
         {
+            // A strip's twin sits at its own UV.
+            let own = [
+                instance.uv_origin[0],
+                instance.uv_origin[1],
+                instance.uv_size[0],
+                instance.uv_size[1],
+            ];
             list.push(
                 HdSource::Interface(strip),
                 HdDepth::None,
                 neutral_a,
                 instance,
+                own,
             );
         }
     };

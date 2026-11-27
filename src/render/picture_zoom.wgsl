@@ -1,9 +1,9 @@
 // VERA-only, experimental (docs/picture-model-art.md): picture art drawn
 // again at its own resolution over the magnified world (`picture_zoom.rs`).
 //
-// Each instance is a copy of a world instance that drew from a picture page;
-// its UV addresses the page's HD twin, laid out at the same normalised
-// coordinates. The quad is the world draw's quad, rounded as the world pass
+// Each instance is a copy of a world instance that drew from a picture page,
+// with its rectangle on the HD twin's page beside it (`hd_uv`); its own UV
+// still addresses the page the world drew from. The quad is the world draw's quad, rounded as the world pass
 // rounds it at zoom 1, then scaled into the target. A fragment maps back to
 // the world pixel it covers, computes that pixel's native Z with the
 // zsprite shader's row walker (`native_row_z`) and compares it with the
@@ -76,6 +76,8 @@ struct Instance {
     @location(12) z_gradient: u32,
     @location(13) zshape_origin: vec2f,
     @location(14) palette_light: vec4u,
+    // The instance's UV origin and size on the HD page.
+    @location(4) hd_uv: vec4f,
 };
 
 struct VertexOutput {
@@ -120,9 +122,9 @@ fn vs_main(@builtin(vertex_index) idx: u32, instance: Instance) -> VertexOutput 
         0.5,
         1.0,
     );
-    output.uv = instance.uv_origin + corner * instance.uv_size;
-    let far = instance.uv_origin + instance.uv_size;
-    output.uv_rect = vec4f(min(instance.uv_origin, far), max(instance.uv_origin, far));
+    output.uv = instance.hd_uv.xy + corner * instance.hd_uv.zw;
+    let far = instance.hd_uv.xy + instance.hd_uv.zw;
+    output.uv_rect = vec4f(min(instance.hd_uv.xy, far), max(instance.hd_uv.xy, far));
     output.tint = instance.tint;
     output.alpha = instance.alpha;
     output.fx_flags = instance.fx_flags;

@@ -95,11 +95,12 @@ impl BeaconArt {
             .iter()
             .zip(ramps)
             .map(|(palette, ramp)| match &tactical_picture {
-                Some(frames) => CenteredShapeStrip::from_picture_on_device(
+                Some((frames, hd)) => CenteredShapeStrip::from_picture_on_device(
                     device,
                     queue,
                     batch,
                     frames,
+                    hd.as_ref(),
                     Some(ramp),
                 ),
                 None => CenteredShapeStrip::from_shp_on_device(
@@ -125,7 +126,7 @@ impl BeaconArt {
             .collect();
         let radar = shape("rdrbeacn.shp");
         let radar_picture = picture("rdrbeacn.shp", radar.as_ref())
-            .map(|frames| {
+            .map(|(frames, _)| {
                 ramps
                     .iter()
                     .take(palettes.len())

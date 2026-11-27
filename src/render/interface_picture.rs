@@ -12,7 +12,7 @@
 
 use crate::assets::picture_file::PictureFrames;
 use crate::assets::shp_file::ShpFile;
-use crate::render::picture_atlas::{GamePictureFrames, PICTURE_SCALE_MAX};
+use crate::render::picture_atlas::{GamePictureFrames, HdFrames, PICTURE_SCALE_MAX};
 
 /// A fitting picture for an interface SHP.
 pub(crate) struct InterfacePicture {
@@ -25,14 +25,16 @@ pub(crate) struct InterfacePicture {
 
 impl InterfacePicture {
     /// The picture at the SHP's own pixels, as the picture art draws at 1x
-    /// (`GamePictureFrames::shrink`), keeping its frames at their own
+    /// (`GamePictureFrames::shrink`), and above 1x its frames at their own
     /// resolution for the zoomed draw.
-    pub(crate) fn game_frames(&self) -> Option<GamePictureFrames> {
+    pub(crate) fn game_frames(self) -> Option<(GamePictureFrames, Option<HdFrames>)> {
         let canvas = [
             self.picture.width / self.scale,
             self.picture.height / self.scale,
         ];
-        GamePictureFrames::shrink(self.picture.clone(), self.mask.as_ref(), Some(canvas)).ok()
+        let frames =
+            GamePictureFrames::shrink(&self.picture, self.mask.as_ref(), Some(canvas)).ok()?;
+        Some((frames, HdFrames::new(self.picture, self.mask, self.scale)))
     }
 }
 

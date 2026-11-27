@@ -67,6 +67,7 @@ pub mod overlay_atlas;
 pub mod palette_light;
 pub(crate) mod interface_picture;
 pub(crate) mod picture_atlas;
+pub(crate) mod picture_hd;
 pub(crate) mod picture_zoom;
 pub(crate) mod model_draw;
 pub mod palette_textures;

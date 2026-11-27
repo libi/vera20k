@@ -424,6 +424,24 @@ so it sorts, shades and shadows by the same rules:
   (the shader recomputes that pixel from the 1x page and compares it with
   the world's colour), so units, SHP anims, smoke and explosions drawn over
   the object later keep their magnified pixels instead of being covered.
+- **Memory and loading of the zoomed pictures** (`render::picture_hd`).
+  The atlas decodes a picture one frame at a time (`PictureFrameReader`)
+  and keeps only its game pixels; for art above 1x each sprite keeps a
+  request for its HD twin (the picture's files as the archive holds them,
+  the frame, its rectangle and its house), not the twin's pixels. A frame
+  with no drawn house-colour pixel at the picture's resolution has one twin
+  for every house. While the view is magnified, a sprite drawn whose twin is
+  not on the GPU asks for it and keeps its magnified 1x pixels meanwhile; a
+  worker decodes the picture again, a frame at a time, makes the twin and
+  its mips, and later frames upload what is ready (at most 32 MiB of
+  texels a frame, 32 twins waiting at once) into HD pages of their own
+  (2048 square, a larger twin a page of its own), each twin carrying its
+  UV rectangle there beside its instance. The pages stay within
+  `HD_BUDGET_BYTES` (512 MiB): when a new one does not fit, the page drawn
+  longest ago goes, never one drawn this frame, and its twins come back
+  when drawn again. After `IDLE_FRAMES` (1800) frames with nothing
+  magnified every page goes. The interface strips and the placement
+  preview keep their small HD twins whole, as before.
 - **Model textures** carry mipmaps (each level the alpha-weighted mean of
   the one above, in linear light for colour) and are sampled at the level
   the screen derivatives pick, so a texture shrunk to a few pixels averages
@@ -465,7 +483,8 @@ against this list.
   its scale and window-copy frames; `render_game` prepares the HD list once
   per frame and keeps the world zoom pass when the Options zoom alone
   magnifies picture art; `draw_passes` draws it after the frame composite and
-  after the window copy; `SpriteAtlas` holds the HD twin pages.
+  after the window copy; `SpriteAtlas` holds the model page's HD twin and the
+  picture twins (`render::picture_hd`), which the HD list asks for.
 - The overlay and bridge atlases: a building whose rubble art names a
   declared picture takes its rubble body and shadow frames from the picture
   (`picture_atlas::rubble_picture`). Those atlases are already RGBA pages

@@ -2308,7 +2308,7 @@ mod tests {
             })
             .collect();
         let picture = GamePictureFrames::shrink(
-            crate::assets::picture_file::PictureFrames {
+            &crate::assets::picture_file::PictureFrames {
                 width: 8,
                 height: 2,
                 frames,
@@ -2355,7 +2355,7 @@ mod tests {
             })
             .collect();
         let picture = GamePictureFrames::shrink(
-            crate::assets::picture_file::PictureFrames {
+            &crate::assets::picture_file::PictureFrames {
                 width: 4,
                 height: 1,
                 frames,

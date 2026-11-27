@@ -194,8 +194,16 @@ impl PlacementPreviewArt {
                 .map(|house| rules.house_color_ramps.ramp(house));
             let mut pictures = PictureSources::default();
             let mut load = |source: &PictureSource| {
+                let hd = pictures.hd_frames(source, art, assets, theater_name);
                 let frames = pictures.frames(source, art, assets, theater_name)?;
-                CenteredShapeStrip::from_picture_on_device(device, queue, batch, frames, ramp)
+                CenteredShapeStrip::from_picture_on_device(
+                    device,
+                    queue,
+                    batch,
+                    frames,
+                    hd.as_ref(),
+                    ramp,
+                )
             };
             if let Some(strip) =
                 crate::render::sprite_atlas::buildup_picture(art, Some(rules), type_id)
