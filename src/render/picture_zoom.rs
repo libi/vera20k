@@ -701,3 +701,24 @@ impl PictureZoomPass {
         }
     }
 }
+
+#[cfg(all(test, tests_render_a_r))]
+mod tests {
+    /// The zoomed draw's shader parses and validates with the world shader
+    /// prelude it is built with, the Z seed's pan (`native_z_origin_row`)
+    /// and the blit rect it maps world pixels through included.
+    #[test]
+    fn picture_zoom_shader_parses_and_validates() {
+        use wgpu::naga;
+        let source =
+            crate::render::tactical_shader::world_source(include_str!("picture_zoom.wgsl"));
+        assert!(source.contains("native_z_origin_row(camera.camera_pos.y"));
+        let module = naga::front::wgsl::parse_str(&source).expect("picture zoom shader parses");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .expect("picture zoom shader validates");
+    }
+}

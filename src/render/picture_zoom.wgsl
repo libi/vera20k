@@ -24,7 +24,7 @@ struct Camera {
     world_height: f32,
     pad1: f32,
     native_z_origin_y: f32,
-    native_z_pad: f32,
+    native_z_pan: f32,
 };
 @group(0) @binding(0) var<uniform> camera: Camera;
 
@@ -87,7 +87,8 @@ struct VertexOutput {
     @location(2) tint: vec3f,
     @location(3) @interpolate(flat) alpha: f32,
     @location(4) @interpolate(flat) fx_flags: u32,
-    @location(5) @interpolate(flat) rect_top_height: vec2f,
+    // The world draw's blit rect: position and size, world pixels.
+    @location(5) @interpolate(flat) rect: vec4f,
     @location(6) @interpolate(flat) z_adjust: f32,
     @location(7) @interpolate(flat) z_gradient: u32,
     @location(8) @interpolate(flat) zshape_origin: vec2f,
@@ -128,7 +129,7 @@ fn vs_main(@builtin(vertex_index) idx: u32, instance: Instance) -> VertexOutput 
     output.tint = instance.tint;
     output.alpha = instance.alpha;
     output.fx_flags = instance.fx_flags;
-    output.rect_top_height = vec2f(instance.position.y, instance.size.y);
+    output.rect = vec4f(instance.position, instance.size);
     output.z_adjust = instance.z_adjust;
     output.z_gradient = instance.z_gradient;
     output.zshape_origin = instance.zshape_origin;
@@ -163,10 +164,18 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4f {
     if params.policy != 0u {
         // The zsprite shader's `native_candidate` for this world pixel: the
         // blit rect's row walker, with the BUILDNGZ shape when it has one.
-        let world_pos = vec2f(texel) + camera.camera_pos;
-        let camera_row = i32(round(camera.camera_pos.y + camera.native_z_origin_y));
-        var rect_top = i32(round(input.rect_top_height.x));
-        var rect_bottom = rect_top + max(i32(round(input.rect_top_height.y)), 1);
+        // The world point the zsprite shader interpolates at this world
+        // pixel's centre (`world_pos`): its rounded quad stretched over the
+        // unrounded rect. Equal to `texel + camera_pos` only while the camera
+        // and the rect sit on whole pixels; a scrolling camera does not.
+        let extent = max(input.quad.zw - input.quad.xy, vec2f(1.0));
+        let world_pos = input.rect.xy + (vec2f(texel) + vec2f(0.5) - input.quad.xy) / extent * input.rect.zw;
+        // The Z buffer's row 0 as the zsprite shader takes it: the view's
+        // top less the rows the seed has panned (`native_z::ZSeed`), which a
+        // scrolling view moves every frame.
+        let camera_row = native_z_origin_row(camera.camera_pos.y + camera.native_z_origin_y, camera.native_z_pan);
+        var rect_top = i32(round(input.rect.y));
+        var rect_bottom = rect_top + max(i32(round(input.rect.w)), 1);
         let extended_shape = (input.z_gradient & 0x100u) != 0u;
         var shape_delta = 0;
         if (input.z_gradient & 0x300u) != 0u {
