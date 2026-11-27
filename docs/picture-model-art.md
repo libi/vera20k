@@ -52,6 +52,7 @@ numbers, so `Start=`, `End=`, `LoopStart=`, `Shadow=`, `Sequence=`,
 | `PictureSize=W,H` | the frame canvas in game pixels; the picture is a whole multiple of it (1x, 2x, 4x art) | the picture's own size (1x art) |
 | `Model=` | file name of a binary glTF 2.0 model (`.glb`) | none (no model) |
 | `ModelSize=L` | the length of the model's `body` node along its forward axis, in its rest pose, in leptons (256 per cell); the whole model scales by the same factor | required with `Model=` |
+| `ModelVoxels=X,Y` | the VXL main section's `size_x`, `size_y` (1 to 255) the model stands in for (`asset export-model` prints them, `vxl_size`); the simulation's tilt half sizes then come from them as from that VXL, and `ModelSize=` only scales the drawing | optional; a refused value leaves the tilt to `ModelSize=` |
 
 A value out of range is refused with an in-game message naming the section and
 key; a refused `Picture=` leaves the section with no art (it draws nothing), as
@@ -292,7 +293,7 @@ simulation reads art.
 | Body frame count (rubble) | `building_rubble` (`45F160`) | the body picture's frame count |
 | Body art present in this theater (random maps) | `map/rmg/tech_catalog` | the declared picture |
 | Voxel model loaded (rocking, rockers) | `VoxelAssetCatalog::bind` (`6F9E10`) | `Model=` declared and the file loaded |
-| Tilt half sizes (slope tilt, fire coordinates) | `voxel_asset_catalog::voxel_tilt_half_sizes` (`6F3B6C`) | `body` bounds scaled by `ModelSize` |
+| Tilt half sizes (slope tilt, fire coordinates) | `voxel_asset_catalog::voxel_tilt_half_sizes` (`6F3B6C`) | `ModelVoxels` as a VXL's section sizes, else `body` bounds scaled by `ModelSize` |
 | Overlay image present (authored overlay admission) | `effect_asset_catalog::resolved_overlay_shp_ids` (`5FE620`) | the declared picture found and readable |
 | Ore-tree frame count (spawner timer) | `TerrainAssetCatalog::bind` (`71C87A`) | the picture's frame count |
 | TerrainType radar colour (frame 0 header RGB, `71DF9E`) | same | frame 0's mean colour |
@@ -321,7 +322,7 @@ saves and replays.
 
 The art keys themselves only choose what is drawn (`art_data::VERA_ART_KEYS`:
 `Picture=`, `PictureSize=`, `CameoPicture=`, `AltCameoPicture=`, `Model=`,
-`ModelSize=`). The art INI's multiplayer digest and the rules parts' art
+`ModelSize=`, `ModelVoxels=`). The art INI's multiplayer digest and the rules parts' art
 section list leave them out, and a section they leave empty
 (`art_data::art_multiplayer_digest`), so an art pack's INI agrees with the
 original's when nothing else differs. A section holding only those keys is no

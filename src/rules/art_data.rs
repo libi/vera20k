@@ -130,6 +130,11 @@ pub struct ModelDecl {
     /// `ModelSize=L`: the `body` node's rest length along its forward axis,
     /// in leptons; the whole model scales by the same factor.
     pub size: i32,
+    /// `ModelVoxels=X,Y`: the VXL main section's `size_x`, `size_y` the
+    /// model stands in for (`asset export-model` prints them). When set, the
+    /// simulation's tilt half sizes come from them as from that VXL, and
+    /// `ModelSize=` only scales the drawing.
+    pub voxels: Option<[u8; 2]>,
 }
 
 /// The largest `ModelSize=`: six cells, so the body's length stays within the
@@ -158,12 +163,33 @@ fn parse_model_decl(section_name: &str, section: &IniSection) -> Option<ModelDec
         );
         return None;
     };
-    Some(ModelDecl { file, size })
+    let voxels = section.read_name("ModelVoxels", 0x40).and_then(|_| {
+        let voxels = section
+            .read_int_fields_complete::<2>("ModelVoxels", 0x40)
+            .and_then(|[x, y]| Some([u8::try_from(x).ok()?, u8::try_from(y).ok()?]))
+            .filter(|voxels| voxels.iter().all(|&side| side > 0));
+        if voxels.is_none() {
+            log::warn!(
+                "[{section_name}] ModelVoxels= needs two sizes from 1 to 255; \
+                 the tilt follows ModelSize="
+            );
+            crate::rules::art_problems::report(
+                section_name,
+                "ModelVoxels=",
+                "needs two sizes from 1 to 255",
+                "the tilt follows ModelSize=",
+            );
+        }
+        voxels
+    });
+    Some(ModelDecl { file, size, voxels })
 }
 
 /// VERA-only, experimental (docs/picture-model-art.md): the art keys that
-/// only choose what is drawn. No simulation reader takes them, so a peer
-/// with picture or model art agrees with one without: the multiplayer digest
+/// only choose what is drawn. What the simulation takes from the art they
+/// name (frame counts, `ModelVoxels=`'s tilt half sizes) enters the
+/// simulation's own hashes, so a peer with picture or model art agrees with
+/// one without when those agree: the multiplayer digest
 /// of the art INI leaves them out ([`art_multiplayer_digest`]), and a section
 /// holding nothing else is no art section to the simulation
 /// ([`sim_art_section`]).
@@ -174,6 +200,7 @@ pub const VERA_ART_KEYS: &[&str] = &[
     "AltCameoPicture",
     "Model",
     "ModelSize",
+    "ModelVoxels",
 ];
 
 /// Whether `section` holds VERA's drawing keys ([`VERA_ART_KEYS`]) and

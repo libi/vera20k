@@ -1966,7 +1966,8 @@ fn the_art_digest_leaves_out_veras_drawing_keys() {
     let pack = IniFile::from_str(
         "[GI]\nPicture=GI.png\nSequence=GISequence\nPictureSize=40,50\n\
          [EMPTY]\n[APMUZZLE]\nPicture=APMUZZLE.png\n\
-         [HTNK]\nModel=HTNK.glb\nModelSize=256\nCameoPicture=a.png\nAltCameoPicture=b.png\n",
+         [HTNK]\nModel=HTNK.glb\nModelSize=256\nModelVoxels=24,12\n\
+         CameoPicture=a.png\nAltCameoPicture=b.png\n",
     );
     assert_eq!(
         art_multiplayer_digest(&pack),

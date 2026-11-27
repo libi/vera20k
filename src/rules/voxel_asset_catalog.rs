@@ -161,6 +161,7 @@ impl DeclaredModel {
             decl: crate::rules::art_data::ModelDecl {
                 file: "test.glb".into(),
                 size,
+                voxels: None,
             },
             model,
             half_sizes,
@@ -228,10 +229,12 @@ fn admit_declared_model(
             }
         })
         .clone()?;
-    let Some(half_sizes) = model
-        .body_bounds()
-        .and_then(|bounds| model_tilt_half_sizes(bounds, decl.size))
-    else {
+    // `ModelVoxels=` gives the VXL's own section sizes; else they follow
+    // the model's body at `ModelSize=`.
+    let Some(half_sizes) = model.body_bounds().and_then(|bounds| match decl.voxels {
+        Some([size_x, size_y]) => Some(tilt_half_sizes(size_x, size_y)),
+        None => model_tilt_half_sizes(bounds, decl.size),
+    }) else {
         log::warn!(
             "[{section}] Model={} has no body node with a forward length; it draws nothing",
             decl.file
@@ -331,6 +334,7 @@ fn no_spawn_alt_model(
         decl: crate::rules::art_data::ModelDecl {
             file,
             size: decl.size,
+            voxels: decl.voxels,
         },
         model: Arc::new(model),
         half_sizes,
@@ -1065,6 +1069,40 @@ mod tests {
         // The unit atlas skips a type drawn from a model, refused or not.
         assert!(rules.draws_declared_model("TEST"));
         assert!(!rules.draws_declared_model("PLAIN"));
+    }
+
+    /// With `ModelVoxels=X,Y` a model's tilt half sizes are those of a VXL
+    /// whose main section is X by Y voxels (`voxel_tilt_half_sizes`),
+    /// whatever `ModelSize=` and the body's bounds would give; a refused
+    /// value leaves them to `ModelSize=`.
+    #[test]
+    fn model_voxels_give_the_vxls_tilt_half_sizes() {
+        let directory = crate::map::source::test_support::TestDirectory::new("model-voxels");
+        let glb = crate::assets::model_file::test_glb::box_model(2.0, 1.0, 4.0, &[]);
+        std::fs::write(directory.path().join("tank.glb"), &glb).unwrap();
+        let assets = AssetManager::from_loose_root_for_test(directory.path());
+        let art = IniFile::from_str(
+            "[BODY]\nVoxel=yes\nModel=tank.glb\nModelSize=120\nModelVoxels=24,12\n\
+             [BAD]\nVoxel=yes\nModel=tank.glb\nModelSize=120\nModelVoxels=300,12\n",
+        );
+        let mut rules = RuleSet::from_ini_with_fixed_art_for_test(
+            &IniFile::from_str(
+                "[VehicleTypes]\n0=TEST\n1=BAD\n[TEST]\nImage=BODY\nStrength=300\n\
+                 [BAD]\nStrength=300\n",
+            ),
+            &art,
+        )
+        .unwrap();
+        rules.install_art_fixture(ArtRegistry::from_ini(&art));
+        rules.bind_effect_assets(&assets, "TEM", "TEMPERATE");
+        // A 24 by 12 section: [12 / 2 + 0.5, 24 / 2].
+        assert_eq!(tilt_half_sizes(24, 12), [6.5, 12.0]);
+        assert_eq!(rules.object_voxel_half_sizes("TEST"), Some([6.5, 12.0]));
+        assert_eq!(
+            rules.object_voxel_half_sizes("BAD"),
+            Some([5.5, 10.0]),
+            "ModelSize= decides, as without the key"
+        );
     }
 
     /// A unit with indexed guns needs a `turretN` node for each, as a missing
