@@ -599,14 +599,20 @@ impl TacticalCaptureSession {
                     beams,
                 });
         }
-        if map.audio_tail_started.is_some() && map.draws.len() == requested.max(1) as usize {
-            // The existing render/audio service keeps running during the tail.
-            // These repeat draws do not manufacture extra exact-step receipts.
+        if (map.audio_tail_started.is_some() || map.hd_settle_draws.is_some())
+            && map.draws.len() == requested.max(1) as usize
+        {
+            // The existing render/audio service keeps running during the tail
+            // and while HD twins arrive. These repeat draws do not
+            // manufacture extra exact-step receipts.
             ensure!(
                 output.times.radar_ms == sim.session().tick() * MAP_PRESENTATION_INTERVAL_MS,
                 "audio-tail draw changed the diagnostic simulation clock"
             );
-            map.audio_tail_draws = map.audio_tail_draws.saturating_add(1);
+            match map.hd_settle_draws.as_mut() {
+                Some(draws) => *draws = draws.saturating_add(1),
+                None => map.audio_tail_draws = map.audio_tail_draws.saturating_add(1),
+            }
             return Ok(());
         }
         map.observe_draw(requested, step, output.times)?;
@@ -802,6 +808,9 @@ impl TacticalCaptureSession {
             "evidence_limitations": ["Production loading, exact stepping and GPU readback only; no native pixel or gameplay equivalence is established.",
                 "Radar and timed HUD presentation consume the recorded diagnostic exact-step clock; ordinary gameplay clocks are unchanged. Audio, menus, animated input and scenario exit are outside this comparison."],
         });
+        if let Some(draws) = map.hd_settle_draws {
+            manifest["observations"]["picture_hd_settle_draw_count"] = json!(draws);
+        }
         if profile.value.observe_audio.is_some() {
             manifest["observations"]["audio"]["tail_draw_count"] = json!(map.audio_tail_draws);
             manifest["evidence_limitations"].as_array_mut().expect("limits array").push(json!(

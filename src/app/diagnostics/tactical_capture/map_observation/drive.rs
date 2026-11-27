@@ -3,6 +3,10 @@
 
 use super::*;
 
+/// The most repeat draws a capture waits for the zoomed picture art's HD
+/// twins (`PictureHdStore::settled`) before it reads back what it has.
+const HD_SETTLE_DRAWS_MAX: u32 = 600;
+
 impl TacticalCaptureSession {
     fn set_map_audio_context(
         &self,
@@ -399,6 +403,24 @@ impl TacticalCaptureSession {
                     !truncated,
                     "PCM observation exhausted a declared event/sample/action budget"
                 );
+            }
+            // VERA-only (docs/picture-model-art.md): the zoomed picture art
+            // asks for its HD twins as it draws; repeat the last draw, no
+            // step advancing, until those it draws are on the GPU, so the
+            // capture shows them sharp. A twin that cannot fit the budget
+            // stops the wait after `HD_SETTLE_DRAWS_MAX` draws.
+            let hd_settled = state
+                .match_state
+                .match_presentation
+                .sprite_atlas
+                .as_ref()
+                .is_none_or(|atlas| atlas.picture_hd().settled());
+            let map = self.map_state_mut()?;
+            let settle_draws = map.hd_settle_draws.unwrap_or(0);
+            if !hd_settled && settle_draws < HD_SETTLE_DRAWS_MAX {
+                map.hd_settle_draws.get_or_insert(0);
+                self.failure_stage = "picture-hd-settle".to_owned();
+                return Ok(());
             }
             self.capture_requested = true;
             self.failure_stage = "final-render".to_owned();

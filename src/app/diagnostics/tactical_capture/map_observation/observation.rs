@@ -23,6 +23,10 @@ pub(in crate::app::diagnostics::tactical_capture::session) struct MapObservation
     pub(super) load_segments: Vec<MapLoadSegment>,
     pub(super) audio_tail_started: Option<Instant>,
     pub(super) audio_tail_draws: u32,
+    /// VERA-only (docs/picture-model-art.md): repeat draws after the last
+    /// step while the zoomed picture art's HD twins arrive; None until the
+    /// wait begins.
+    pub(super) hd_settle_draws: Option<u32>,
     pub(super) audio: Option<Value>,
 }
 
