@@ -2919,6 +2919,7 @@ def _observations(value: Any, profile: Mapping[str, Any], final: Mapping[str, An
         raise ValidationError('gesture/sidebar observations require the current observation policy')
     require_exact_keys(observations, ('policy', 'owners', 'commands', 'frames',
                                      *(('audio',) if 'observe_audio' in profile else ()),
+                                     *(('picture_hd_settle_draw_count',) if 'picture_hd_settle_draw_count' in observations else ()),
                                      *(('electric_bolt_draws',) if profile.get('observe_electric_bolts', False) else ()),
                                      *(('radiation_beam_draws',) if profile.get('observe_radiation_beams', False) else ()),
                                      *(('load_segments',) if profile.get('allow_load_segments', False) else ()),
