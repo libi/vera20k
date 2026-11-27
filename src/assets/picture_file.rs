@@ -37,11 +37,46 @@ pub struct PictureFrames {
 }
 
 impl PictureFrames {
-    /// Decode and composite every frame of the PNG or APNG `bytes`. An APNG's
-    /// default image that is not part of its animation is skipped; each
-    /// animation frame is drawn onto the canvas by its blend operation and
-    /// then disposed of by its dispose operation (APNG 1.0, `fcTL`).
+    /// Decode and composite every frame of the PNG or APNG `bytes`
+    /// ([`PictureFrameReader`]), all frames kept.
     pub fn decode(bytes: &[u8]) -> Result<Self, PictureError> {
+        let mut reader = PictureFrameReader::new(bytes)?;
+        let (width, height) = reader.size();
+        let mut frames = Vec::with_capacity(reader.frame_count() as usize);
+        while let Some(frame) = reader.next_frame()? {
+            frames.push(frame.to_vec());
+        }
+        Ok(Self {
+            width,
+            height,
+            frames,
+        })
+    }
+}
+
+/// A PNG or APNG's frames composited onto its canvas one at a time, as an
+/// APNG viewer shows them, so a reader that needs each frame only once holds
+/// one canvas instead of every frame. An APNG's default image that is not
+/// part of its animation is skipped; each animation frame is drawn onto the
+/// canvas by its blend operation and then disposed of by its dispose
+/// operation (APNG 1.0, `fcTL`) before the next one.
+pub struct PictureFrameReader<'a> {
+    reader: png::Reader<std::io::Cursor<&'a [u8]>>,
+    width: u32,
+    height: u32,
+    frame_count: u32,
+    next: u32,
+    buffer: Vec<u8>,
+    canvas: Vec<u8>,
+    /// What the frame last shown asks done to the canvas before the next.
+    dispose: Option<(png::DisposeOp, [u32; 4], Option<Vec<u8>>)>,
+}
+
+impl<'a> PictureFrameReader<'a> {
+    /// The reader of `bytes`, its header read. Refuses a picture whose frames
+    /// together exceed [`PICTURE_BYTES_MAX`] decoded, as [`PictureFrames::decode`]
+    /// would hold them.
+    pub fn new(bytes: &'a [u8]) -> Result<Self, PictureError> {
         let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
         decoder.set_transformations(png::Transformations::normalize_to_color8());
         let mut reader = decoder.read_info()?;
@@ -67,84 +102,107 @@ impl PictureFrames {
         if !default_in_animation {
             reader.next_frame(&mut buffer)?;
         }
-        let canvas_len = canvas_bytes as usize;
-        let mut canvas = vec![0u8; canvas_len];
-        let mut frames = Vec::with_capacity(frame_count as usize);
-        for index in 0..frame_count {
-            let output = reader.next_frame(&mut buffer)?;
-            let control = reader.info().frame_control;
-            let region = control.map_or([0, 0, width, height], |control| {
-                [
-                    control.x_offset,
-                    control.y_offset,
-                    control.width,
-                    control.height,
-                ]
-            });
-            let [x, y, w, h] = region;
-            if x.checked_add(w).is_none_or(|right| right > width)
-                || y.checked_add(h).is_none_or(|bottom| bottom > height)
-            {
-                return Err(PictureError::FrameOutside);
-            }
-            let samples = &buffer[..output.buffer_size()];
-            // RGBA output is used as it is; other layouts are expanded.
-            let expanded;
-            let rgba: &[u8] = if output.color_type == png::ColorType::Rgba {
-                samples
-            } else {
-                expanded = to_rgba(samples, output.color_type, w, h);
-                &expanded
-            };
-            let dispose = control.map_or(png::DisposeOp::None, |control| control.dispose_op);
-            // A first frame's Previous disposal acts as Background (APNG 1.0).
-            let dispose = match (index, dispose) {
-                (0, png::DisposeOp::Previous) => png::DisposeOp::Background,
-                (_, dispose) => dispose,
-            };
-            let saved = (dispose == png::DisposeOp::Previous).then(|| canvas.clone());
-            let over = control.is_some_and(|control| control.blend_op == png::BlendOp::Over);
-            let row_bytes = (w * 4) as usize;
-            for row in 0..h {
-                let from = (row * w * 4) as usize;
-                let to = (((y + row) * width + x) * 4) as usize;
-                let source = &rgba[from..from + row_bytes];
-                let target = &mut canvas[to..to + row_bytes];
-                if !over {
-                    target.copy_from_slice(source);
-                    continue;
-                }
-                for (source, target) in source.chunks_exact(4).zip(target.chunks_exact_mut(4)) {
-                    match source[3] {
-                        255 => target.copy_from_slice(source),
-                        0 => {}
-                        _ => {
-                            let blended = blend_over(
-                                source.try_into().unwrap(),
-                                (&*target).try_into().unwrap(),
-                            );
-                            target.copy_from_slice(&blended);
-                        }
-                    }
-                }
-            }
-            frames.push(canvas.clone());
-            match dispose {
-                png::DisposeOp::None => {}
-                png::DisposeOp::Background => {
-                    for row in y..y + h {
-                        let start = ((row * width + x) * 4) as usize;
-                        canvas[start..start + (w * 4) as usize].fill(0);
-                    }
-                }
-                png::DisposeOp::Previous => canvas = saved.unwrap(),
-            }
-        }
         Ok(Self {
+            reader,
             width,
             height,
-            frames,
+            frame_count,
+            next: 0,
+            buffer,
+            canvas: vec![0; canvas_bytes as usize],
+            dispose: None,
         })
+    }
+
+    /// The canvas, in picture pixels.
+    pub fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    pub fn frame_count(&self) -> u32 {
+        self.frame_count
+    }
+
+    /// The next frame composited onto the canvas, straight RGBA, `width *
+    /// height * 4` bytes; None after the last.
+    pub fn next_frame(&mut self) -> Result<Option<&[u8]>, PictureError> {
+        if self.next >= self.frame_count {
+            return Ok(None);
+        }
+        let (width, height) = (self.width, self.height);
+        match self.dispose.take() {
+            None | Some((png::DisposeOp::None, ..)) => {}
+            Some((png::DisposeOp::Background, [x, y, w, h], _)) => {
+                for row in y..y + h {
+                    let start = ((row * width + x) * 4) as usize;
+                    self.canvas[start..start + (w * 4) as usize].fill(0);
+                }
+            }
+            Some((png::DisposeOp::Previous, _, saved)) => {
+                if let Some(saved) = saved {
+                    self.canvas = saved;
+                }
+            }
+        }
+        let index = self.next;
+        self.next += 1;
+        let output = self.reader.next_frame(&mut self.buffer)?;
+        let control = self.reader.info().frame_control;
+        let region = control.map_or([0, 0, width, height], |control| {
+            [
+                control.x_offset,
+                control.y_offset,
+                control.width,
+                control.height,
+            ]
+        });
+        let [x, y, w, h] = region;
+        if x.checked_add(w).is_none_or(|right| right > width)
+            || y.checked_add(h).is_none_or(|bottom| bottom > height)
+        {
+            return Err(PictureError::FrameOutside);
+        }
+        let samples = &self.buffer[..output.buffer_size()];
+        // RGBA output is used as it is; other layouts are expanded.
+        let expanded;
+        let rgba: &[u8] = if output.color_type == png::ColorType::Rgba {
+            samples
+        } else {
+            expanded = to_rgba(samples, output.color_type, w, h);
+            &expanded
+        };
+        let dispose = control.map_or(png::DisposeOp::None, |control| control.dispose_op);
+        // A first frame's Previous disposal acts as Background (APNG 1.0).
+        let dispose = match (index, dispose) {
+            (0, png::DisposeOp::Previous) => png::DisposeOp::Background,
+            (_, dispose) => dispose,
+        };
+        let saved = (dispose == png::DisposeOp::Previous).then(|| self.canvas.clone());
+        let over = control.is_some_and(|control| control.blend_op == png::BlendOp::Over);
+        let row_bytes = (w * 4) as usize;
+        for row in 0..h {
+            let from = (row * w * 4) as usize;
+            let to = (((y + row) * width + x) * 4) as usize;
+            let source = &rgba[from..from + row_bytes];
+            let target = &mut self.canvas[to..to + row_bytes];
+            if !over {
+                target.copy_from_slice(source);
+                continue;
+            }
+            for (source, target) in source.chunks_exact(4).zip(target.chunks_exact_mut(4)) {
+                match source[3] {
+                    255 => target.copy_from_slice(source),
+                    0 => {}
+                    _ => {
+                        let blended =
+                            blend_over(source.try_into().unwrap(), (&*target).try_into().unwrap());
+                        target.copy_from_slice(&blended);
+                    }
+                }
+            }
+        }
+        self.dispose = Some((dispose, region, saved));
+        Ok(Some(&self.canvas))
     }
 }
 

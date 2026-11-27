@@ -185,10 +185,16 @@ pub fn alongside(pooled: impl FnOnce() + Send, here: impl FnOnce()) {
 /// Drop `value` on the worker pool, so the caller does not wait for it to be
 /// freed. The browser drops it here: its pool may not run.
 pub fn drop_on_pool<T: Send + 'static>(value: T) {
+    spawn_on_pool(move || drop(value));
+}
+
+/// Run `work` on the worker pool without waiting for it. The browser runs it
+/// here: its pool may not run.
+pub fn spawn_on_pool(work: impl FnOnce() + Send + 'static) {
     #[cfg(not(target_arch = "wasm32"))]
-    rayon::spawn(move || drop(value));
+    rayon::spawn(work);
     #[cfg(target_arch = "wasm32")]
-    drop(value);
+    work();
 }
 
 /// rayon's global pool as the game starts it: each worker has the game's
