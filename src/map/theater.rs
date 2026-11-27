@@ -58,6 +58,22 @@ pub struct TileImage {
     pub offset_x: i32,
     /// Y offset of diamond origin within this buffer (negative = extra data extends above).
     pub offset_y: i32,
+    /// VERA-only, experimental (docs/picture-model-art.md): for a cell drawn
+    /// from a tile picture above 1x, where its own-resolution pixels are, for
+    /// the zoomed draw; None otherwise.
+    pub picture: Option<TileImagePicture>,
+}
+
+/// VERA-only, experimental: a tile picture cell's source at its own
+/// resolution: the picture file as the archive or folder holds it, its
+/// scale, and the frame (the cell's index in the template) whose top-left
+/// `width x height` game pixels, `scale` times larger, are the cell.
+#[derive(Clone)]
+pub struct TileImagePicture {
+    pub file: String,
+    pub bytes: crate::assets::mix_archive::SharedBytes,
+    pub scale: u32,
+    pub frame: u32,
 }
 
 /// Static definition for a theater.
@@ -1804,6 +1820,8 @@ pub fn inject_template_tiles(
 struct TilePicture {
     frames: crate::assets::picture_file::PictureFrames,
     scale: u32,
+    file: String,
+    bytes: crate::assets::mix_archive::SharedBytes,
 }
 
 impl TilePicture {
@@ -1814,13 +1832,14 @@ impl TilePicture {
             [max[0].max(tile.pixel_width), max[1].max(tile.pixel_height)]
         });
         let loaded = asset_manager
-            .get_ref(file)
+            .get_shared(file)
             .ok_or_else(|| "the file is not found".to_owned())
             .and_then(|bytes| {
-                crate::assets::picture_file::PictureFrames::decode(bytes)
+                crate::assets::picture_file::PictureFrames::decode(&bytes)
+                    .map(|frames| (frames, bytes))
                     .map_err(|error| error.to_string())
             })
-            .and_then(|frames| {
+            .and_then(|(frames, bytes)| {
                 let scale = frames.width / max[0];
                 if scale == 0
                     || scale > 8
@@ -1837,7 +1856,12 @@ impl TilePicture {
                         max[1]
                     ));
                 }
-                Ok(Self { frames, scale })
+                Ok(Self {
+                    frames,
+                    scale,
+                    file: file.to_owned(),
+                    bytes,
+                })
             });
         match loaded {
             Ok(picture) => {
@@ -1863,13 +1887,14 @@ impl TilePicture {
 }
 
 /// Cell `index`'s RGBA: from its template picture when one loaded
-/// ([`TilePicture`]), else the TMP's own pixels through `palette`.
+/// ([`TilePicture`]), else the TMP's own pixels through `palette`; and for a
+/// picture above 1x where its own-resolution pixels are.
 fn tile_rgba(
     tmp: &TmpFile,
     index: usize,
     palette: &Palette,
     picture: Option<&TilePicture>,
-) -> Result<Vec<u8>, crate::assets::error::AssetError> {
+) -> Result<(Vec<u8>, Option<TileImagePicture>), crate::assets::error::AssetError> {
     if let Some(picture) = picture
         && let Some(tile) = tmp.tiles.get(index).and_then(Option::as_ref)
         && let Some(rgba) = picture.frames.shrunk_region(
@@ -1878,9 +1903,15 @@ fn tile_rgba(
             [tile.pixel_width, tile.pixel_height],
         )
     {
-        return Ok(rgba);
+        let hd = (picture.scale > 1).then(|| TileImagePicture {
+            file: picture.file.clone(),
+            bytes: picture.bytes.clone(),
+            scale: picture.scale,
+            frame: u32::try_from(index).unwrap_or(u32::MAX),
+        });
+        return Ok((rgba, hd));
     }
-    tmp.tile_to_rgba(index, palette)
+    tmp.tile_to_rgba(index, palette).map(|rgba| (rgba, None))
 }
 
 /// Load RGBA tile images for tiles needed by the map. Groups by tile_id
@@ -1987,7 +2018,7 @@ pub fn load_tile_images(
                 continue;
             };
             match tile_rgba(&tmp, source_sub, palette, picture.as_ref()) {
-                Ok(rgba) => {
+                Ok((rgba, picture)) => {
                     images.insert(
                         TileKey {
                             tile_id: *tile_id,
@@ -2001,6 +2032,7 @@ pub fn load_tile_images(
                             height: tile.pixel_height,
                             offset_x: tile.offset_x,
                             offset_y: tile.offset_y,
+                            picture,
                         },
                     );
                 }
@@ -2040,7 +2072,9 @@ pub fn load_tile_images(
                 else {
                     continue;
                 };
-                if let Ok(rgba) = tile_rgba(&var_tmp, source_sub, palette, picture.as_ref()) {
+                if let Ok((rgba, picture)) =
+                    tile_rgba(&var_tmp, source_sub, palette, picture.as_ref())
+                {
                     images.insert(
                         TileKey {
                             tile_id: *tile_id,
@@ -2054,6 +2088,7 @@ pub fn load_tile_images(
                             height: tile.pixel_height,
                             offset_x: tile.offset_x,
                             offset_y: tile.offset_y,
+                            picture,
                         },
                     );
                     variant_count += 1;

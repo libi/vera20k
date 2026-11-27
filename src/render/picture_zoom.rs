@@ -54,6 +54,12 @@ impl PictureHdPage {
         Self { color, indices }
     }
 
+    /// The colour, encoded bytes (premultiplied, which an opaque or empty
+    /// texel leaves as it is), as the terrain HD pass reads its pages.
+    pub(crate) fn color_view(&self) -> &wgpu::TextureView {
+        &self.color
+    }
+
     pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue, page: HdPage) -> Self {
         use wgpu::util::DeviceExt;
         let size = wgpu::Extent3d {
@@ -201,6 +207,22 @@ pub(crate) struct PictureZoomPass {
     hd_uvs: Option<wgpu::Buffer>,
     runs: Vec<HdRun>,
     target: HdTarget,
+    /// The tile pictures' twins this frame draws, by HD page of the tile
+    /// atlas's store (`render::hd_terrain`'s pass).
+    tiles: Vec<(usize, Vec<TileHdDraw>)>,
+    terrain: crate::render::hd_terrain::HdTerrainPass,
+}
+
+/// A cell drawn again from its tile picture's twin: the terrain instance's
+/// world position and size, and its places in the tile atlas and on the HD
+/// page, and the twin's scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct TileHdDraw {
+    pub position: [f32; 2],
+    pub size: [f32; 2],
+    pub atlas_origin: [u32; 2],
+    pub hd_origin: [u32; 2],
+    pub scale: u32,
 }
 
 /// The instance attributes picture_zoom.wgsl reads; the HD UV rectangle
@@ -381,11 +403,18 @@ impl PictureZoomPass {
             hd_uvs: None,
             runs: Vec::new(),
             target: HdTarget::Frame,
+            tiles: Vec::new(),
+            terrain: {
+                let mut terrain = crate::render::hd_terrain::HdTerrainPass::new(device);
+                terrain.ensure_pipeline(device, format);
+                terrain
+            },
         }
     }
 
     /// This frame's HD `instances` with their HD UV rectangles `hd_uvs`,
-    /// drawn in `runs`, for `target`.
+    /// drawn in `runs`, and its `tiles`, for `target`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn set_frame(
         &mut self,
         device: &wgpu::Device,
@@ -393,8 +422,10 @@ impl PictureZoomPass {
         instances: &[SpriteInstance],
         hd_uvs: &[[f32; 4]],
         runs: Vec<HdRun>,
+        tiles: Vec<(usize, Vec<TileHdDraw>)>,
         target: HdTarget,
     ) {
+        self.tiles = tiles;
         let upload = |buffer: &mut Option<wgpu::Buffer>, label, bytes: &[u8]| {
             let needed = (bytes.len() as u64).max(1);
             if buffer.as_ref().is_none_or(|buffer| buffer.size() < needed) {
@@ -428,11 +459,77 @@ impl PictureZoomPass {
     /// No HD draw this frame.
     pub(crate) fn clear(&mut self) {
         self.runs.clear();
+        self.tiles.clear();
     }
 
     /// Where this frame draws, if it draws.
     pub(crate) fn target(&self) -> Option<HdTarget> {
-        (!self.runs.is_empty()).then_some(self.target)
+        (!self.runs.is_empty() || !self.tiles.is_empty()).then_some(self.target)
+    }
+
+    /// Draw this frame's tiles into `view` at `placement` inside `scissor`,
+    /// before the sprites (`draw`), as the world drew its tiles first:
+    /// `render::hd_terrain`'s pass over the native `composition`, reading
+    /// the tile atlas `tiles` and each twin's HD page from `pages`, the
+    /// world camera at `camera`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn draw_tiles<'a>(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        placement: &HdPlacement<'_>,
+        composition: &wgpu::Texture,
+        tiles: &wgpu::TextureView,
+        pages: &dyn Fn(usize) -> Option<&'a PictureHdPage>,
+        camera: [f32; 2],
+        scissor: [u32; 4],
+    ) {
+        if placement.scale <= 1.0 {
+            return;
+        }
+        let terrain_placement = crate::render::hd_terrain::TerrainPlacement {
+            origin: placement.origin,
+            scale: placement.scale,
+            mask: placement.mask.as_ref().map(|mask| HdMask {
+                frame_origin: mask.frame_origin,
+                frame_scale: mask.frame_scale,
+                now: mask.now,
+                before: mask.before,
+            }),
+        };
+        for (page, draws) in &self.tiles {
+            let Some(page) = pages(*page) else {
+                continue;
+            };
+            // As `draw_passes::hd_terrain_pieces` places a tile.
+            let draws: Vec<crate::render::hd_terrain::HdTerrainDraw> = draws
+                .iter()
+                .map(|draw| crate::render::hd_terrain::HdTerrainDraw {
+                    origin: [
+                        (draw.position[0] - camera[0] + 0.5).floor(),
+                        (draw.position[1] - camera[1] + 0.5).floor(),
+                    ],
+                    size: draw.size,
+                    atlas_origin: draw.atlas_origin,
+                    hd_origin: draw.hd_origin,
+                    hd_scale: [draw.scale, 0],
+                })
+                .collect();
+            self.terrain.encode(
+                device,
+                encoder,
+                view,
+                composition,
+                tiles,
+                false,
+                page.color_view(),
+                &terrain_placement,
+                scissor,
+                &draws,
+                false,
+            );
+        }
     }
 
     /// Draw this frame's runs into `view` at `placement`, inside `scissor`

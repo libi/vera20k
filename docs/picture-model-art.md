@@ -405,6 +405,22 @@ so it sorts, shades and shadows by the same rules:
 - **Tiles.** `theater::load_tile_images` takes each cell's RGBA from its
   template picture, shrunk by coverage, in place of the TMP's palette
   pixels; the tile atlas, its Z page and the zdepth blitter are unchanged.
+- **Zoomed tiles.** A cell drawn from a tile picture above 1x keeps where
+  its own pixels are (`TileImagePicture`: the file, its scale and the frame;
+  the twin is that frame's top-left cell rectangle at the picture's scale,
+  the region its 1x pixels were shrunk from). The tile atlas holds those
+  twins in a store of its own (`render::picture_hd`, as the sprite atlas's:
+  made on a worker when the zoomed draw first meets the cell, its own
+  budget, the same eviction), and the zoomed draw (`render::picture_zoom`)
+  draws each cell the world drew whose twin is ready through the HD terrain
+  pass (`render::hd_terrain`), before the sprites: a target pixel takes the
+  twin's pixel where the completed world still shows the cell's own 1x
+  pixel, under the light that pixel received (the cell's lighting, tint
+  and shadows, from the world's colour over the cell's own), so the TMP's
+  Z, height, ramps and extra data decide what shows exactly as at 1x and
+  only the colour comes from the picture. Neighbouring cells meet where
+  their 1x pixels meet. It draws over the zoomed frame and over the Options
+  zoom's window copy alike.
 - **Cameos.** The cameo atlas is straight RGBA: a cameo picture's frame 0 is
   one more piece, cropped to its drawn pixels on the 60x48 canvas; the
   darkening, clock and strip overlays draw over it as over any cameo.
@@ -614,9 +630,9 @@ Art that still only comes from SHP, PCX or TMP, and why:
 
 ## Known residuals
 
-- Tile pictures draw at 1x only (no zoomed HD twin) and have no unlit
-  pixels: the tile blitter lights every pixel (`zdepth_shader.wgsl` passes
-  index 1), and taking a mask would change that shader.
+- Tile pictures have no unlit pixels: the tile blitter lights every pixel
+  (`zdepth_shader.wgsl` passes index 1), and taking a mask would change that
+  shader.
 - Each suffix sibling of a declared template (`clear01a.tem`, ...) needs a
   picture of its own; one without draws its TMP's pixels and is reported.
 - Overlay presence is not in the config hash, as for SHPs: a declared

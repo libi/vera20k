@@ -206,12 +206,52 @@ impl PictureHdStore {
         uv_origin: [f32; 2],
         uv_size: [f32; 2],
     ) -> Option<(usize, [f32; 4])> {
+        let (id, hd_page, origin) = self.resident(page, uv_origin)?;
+        let &(_, entry_size) =
+            self.entries
+                .get(&(page, uv_origin[0].to_bits(), uv_origin[1].to_bits()))?;
+        let (book, _) = self.pages[hd_page].as_ref()?;
+        let hd_size = self.twins[id as usize]
+            .request
+            .size
+            .map(|side| side * book.scale);
+        let page_size = book.size.map(|side| side as f32);
+        // The instance's share of its entry, on the twin.
+        let share = [uv_size[0] / entry_size[0], uv_size[1] / entry_size[1]];
+        Some((
+            hd_page,
+            [
+                origin[0] as f32 / page_size[0],
+                origin[1] as f32 / page_size[1],
+                hd_size[0] as f32 * share[0] / page_size[0],
+                hd_size[1] as f32 * share[1] / page_size[1],
+            ],
+        ))
+    }
+
+    /// [`Self::lookup`] in texels: the HD page, the twin's top-left on it
+    /// and its HD pixels per game pixel (the tile pass,
+    /// `render::hd_terrain`).
+    pub(crate) fn lookup_texels(
+        &mut self,
+        page: usize,
+        uv_origin: [f32; 2],
+    ) -> Option<(usize, [u32; 2], u32)> {
+        let (_, hd_page, origin) = self.resident(page, uv_origin)?;
+        let (book, _) = self.pages[hd_page].as_ref()?;
+        Some((hd_page, origin, book.scale))
+    }
+
+    /// The twin drawing the entry at `uv_origin` of atlas page `page`, the
+    /// HD page it is on and its place there; None when it is not on the
+    /// GPU, which asks for it. Marks it and its page drawn this frame.
+    fn resident(&mut self, page: usize, uv_origin: [f32; 2]) -> Option<(TwinId, usize, [u32; 2])> {
         if !self.twin_pages.contains(&page) {
             return None;
         }
-        let &(id, entry_size) =
-            self.entries
-                .get(&(page, uv_origin[0].to_bits(), uv_origin[1].to_bits()))?;
+        let &(id, _) = self
+            .entries
+            .get(&(page, uv_origin[0].to_bits(), uv_origin[1].to_bits()))?;
         let twin = &mut self.twins[id as usize];
         twin.last_used = self.frame;
         if !matches!(twin.state, TwinState::Resident { .. } | TwinState::Failed) {
@@ -222,19 +262,7 @@ impl PictureHdStore {
             TwinState::Resident { page, origin } => {
                 let (book, _) = self.pages[page].as_mut()?;
                 book.last_used = self.frame;
-                let hd_size = twin.request.size.map(|side| side * book.scale);
-                let page_size = book.size.map(|side| side as f32);
-                // The instance's share of its entry, on the twin.
-                let share = [uv_size[0] / entry_size[0], uv_size[1] / entry_size[1]];
-                Some((
-                    page,
-                    [
-                        origin[0] as f32 / page_size[0],
-                        origin[1] as f32 / page_size[1],
-                        hd_size[0] as f32 * share[0] / page_size[0],
-                        hd_size[1] as f32 * share[1] / page_size[1],
-                    ],
-                ))
+                Some((id, page, origin))
             }
             TwinState::Missing => {
                 twin.state = TwinState::Wanted;
@@ -719,6 +747,51 @@ mod tests {
             GREEN.repeat(4)[..],
             "the twin is the temperate file's too"
         );
+    }
+
+    /// A tile picture cell's twin is the top-left `size` game pixels of its
+    /// frame at the picture's own resolution, the region its 1x pixels were
+    /// shrunk from, every pixel as the picture holds it.
+    #[test]
+    fn a_tile_twin_is_its_frames_top_left_region_at_its_scale() {
+        // A 10x4 game-pixel canvas at 2x; the cell is 8x4.
+        let (width, height) = (20u32, 8u32);
+        let frame: Vec<u8> = (0..width * height)
+            .flat_map(|at| [(at % width) as u8 * 10, (at / width) as u8 * 20, 7, 255])
+            .collect();
+        let bytes =
+            crate::assets::picture_file::encode_frames(width, height, &[frame.clone()]).unwrap();
+        let files = crate::render::picture_atlas::HdFiles::tile(
+            "clear01.png",
+            Arc::<[u8]>::from(bytes).into(),
+            2,
+        );
+        let twin = HdTwin {
+            files: Arc::clone(&files),
+            frame: 0,
+            origin: [0, 0],
+            size: [8, 4],
+            house: None,
+        };
+        let made = decode_twins(&files, vec![(0, twin)]);
+        let [
+            Decoded {
+                pixels: Some((_, size, mips, indices)),
+                ..
+            },
+        ] = &made[..]
+        else {
+            panic!("one twin made");
+        };
+        assert_eq!(*size, [16, 8]);
+        let expected: Vec<u8> = (0..8)
+            .flat_map(|y| {
+                let row = (y * width) as usize * 4;
+                frame[row..row + 16 * 4].to_vec()
+            })
+            .collect();
+        assert_eq!(mips[..16 * 8 * 4], expected[..]);
+        assert!(indices.iter().all(|&index| index == LIT_INDEX));
     }
 
     /// Houses share the twin of a frame with no house-colour pixel at the

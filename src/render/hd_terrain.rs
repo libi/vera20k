@@ -105,32 +105,256 @@ pub(crate) struct HdTerrainPiece {
     pub size: [f32; 2],
 }
 
+/// One HD terrain draw: a tile or sprite placed in the native composition,
+/// its place in its atlas, and its place and scale on the HD page.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug, PartialEq)]
 pub(crate) struct HdTerrainDraw {
-    origin: [f32; 2],
-    size: [f32; 2],
-    atlas_origin: [u32; 2],
-    hd_origin: [u32; 2],
+    pub origin: [f32; 2],
+    pub size: [f32; 2],
+    pub atlas_origin: [u32; 2],
+    pub hd_origin: [u32; 2],
+    /// HD pixels per native pixel, and padding.
+    pub hd_scale: [u32; 2],
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Params {
+    /// Target width, height, target pixels per native pixel, debug view.
     frame: [f32; 4],
-    /// x: 1 when the atlas texture is an sRGB view (loads come back linear).
+    /// x: 1 when the atlas texture is an sRGB view (loads come back linear);
+    /// y: 1 when a window mask applies; z: window pixels per frame pixel.
     mode: [f32; 4],
+    /// xy: the target pixel of native pixel (0, 0); zw: the window pixel of
+    /// frame pixel (0, 0), for the mask.
+    place: [f32; 4],
 }
 
 /// An atlas's HD key lookup: UV origin → hash, atlas pixel origin, size.
 pub(crate) type HdLookup<'a> = &'a dyn Fn([f32; 2]) -> Option<(u64, [u32; 2], [u32; 2])>;
 
-struct Gpu {
-    page: wgpu::Texture,
+/// Where the native world lands in a target: the frame (origin 0, the wheel
+/// zoom's scale) or the window over the Options zoom's copy, with the mask
+/// that keeps window pixels whose frame pixel changed after the world went
+/// in (`render::picture_zoom::HdMask`, the same rule).
+pub(crate) struct TerrainPlacement<'a> {
+    pub origin: [f32; 2],
+    pub scale: f32,
+    pub mask: Option<crate::render::picture_zoom::HdMask<'a>>,
+}
+
+/// The terrain HD draw itself, shared by the HD art pack's tiles and
+/// sprites ([`HdTerrain`]) and the tile pictures' twins
+/// (`render::picture_zoom`).
+pub(crate) struct HdTerrainPass {
     layout: wgpu::BindGroupLayout,
-    pipeline: Option<(wgpu::TextureFormat, wgpu::RenderPipeline)>,
     pipeline_layout: wgpu::PipelineLayout,
     shader: wgpu::ShaderModule,
+    pipelines: Vec<(wgpu::TextureFormat, wgpu::RenderPipeline)>,
+    /// Bound as both mask textures where there is no mask.
+    no_mask: wgpu::TextureView,
+}
+
+impl HdTerrainPass {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
+            ty,
+            count: None,
+        };
+        let tex = wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("HD terrain"),
+            entries: &[
+                entry(0, tex),
+                entry(1, tex),
+                entry(2, tex),
+                entry(
+                    3,
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                ),
+                entry(4, tex),
+                entry(5, tex),
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("HD terrain"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("HD terrain"),
+            source: wgpu::ShaderSource::Wgsl(shader_source().into()),
+        });
+        let no_mask = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("HD terrain no mask"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
+        Self {
+            layout,
+            pipeline_layout,
+            shader,
+            pipelines: Vec::new(),
+            no_mask,
+        }
+    }
+
+    /// Make the pipeline that draws into `format`, once.
+    pub(crate) fn ensure_pipeline(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) {
+        if !self.pipelines.iter().any(|(cached, _)| *cached == format) {
+            let pipeline = create_pipeline(device, &self.pipeline_layout, &self.shader, format);
+            self.pipelines.push((format, pipeline));
+        }
+    }
+
+    /// Draw `draws` into `target` at `placement`, over `scissor` (target
+    /// pixels), reading the native `composition`, the atlas `tiles`
+    /// (`linear` when it is an sRGB texture) and the HD page `hd`. Nothing
+    /// without a pipeline for the target's format ([`Self::ensure_pipeline`]).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        composition: &wgpu::Texture,
+        tiles: &wgpu::TextureView,
+        linear: bool,
+        hd: &wgpu::TextureView,
+        placement: &TerrainPlacement<'_>,
+        scissor: [u32; 4],
+        draws: &[HdTerrainDraw],
+        debug: bool,
+    ) {
+        let size = target.texture().size();
+        let Some((_, pipeline)) = self
+            .pipelines
+            .iter()
+            .find(|(format, _)| *format == target.texture().format())
+        else {
+            return;
+        };
+        if draws.is_empty() || scissor[2] == 0 || scissor[3] == 0 {
+            return;
+        }
+        let right = (scissor[0] + scissor[2]).min(size.width);
+        let bottom = (scissor[1] + scissor[3]).min(size.height);
+        if right <= scissor[0] || bottom <= scissor[1] {
+            return;
+        }
+        // Fresh buffers per call: the tiles and the overlays encode in one
+        // submission, and a shared buffer written twice would leave both
+        // passes reading the second call's data.
+        use wgpu::util::DeviceExt;
+        let instances = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("HD terrain draws"),
+            contents: bytemuck::cast_slice(draws),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let (now, before, frame_origin, frame_scale, masked) = match &placement.mask {
+            Some(mask) => (
+                mask.now,
+                mask.before,
+                mask.frame_origin,
+                mask.frame_scale,
+                1.0,
+            ),
+            None => (&self.no_mask, &self.no_mask, [0.0; 2], 1.0, 0.0),
+        };
+        let params = Params {
+            frame: [
+                size.width as f32,
+                size.height as f32,
+                placement.scale,
+                if debug { 1.0 } else { 0.0 },
+            ],
+            mode: [if linear { 1.0 } else { 0.0 }, masked, frame_scale, 0.0],
+            place: [
+                placement.origin[0],
+                placement.origin[1],
+                frame_origin[0],
+                frame_origin[1],
+            ],
+        };
+        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("HD terrain"),
+            contents: bytemuck::bytes_of(&params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let composition_view = composition.create_view(&Default::default());
+        let view = |binding, view| wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(view),
+        };
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("HD terrain"),
+            layout: &self.layout,
+            entries: &[
+                view(0, &composition_view),
+                view(1, tiles),
+                view(2, hd),
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: uniform.as_entire_binding(),
+                },
+                view(4, now),
+                view(5, before),
+            ],
+        });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("HD terrain"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_scissor_rect(
+            scissor[0],
+            scissor[1],
+            right - scissor[0],
+            bottom - scissor[1],
+        );
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.set_vertex_buffer(0, instances.slice(..));
+        pass.draw(0..4, 0..draws.len() as u32);
+    }
+}
+
+struct Gpu {
+    page: wgpu::Texture,
+    pass: HdTerrainPass,
 }
 
 /// The pack's tiles resident on the GPU, keyed by tile hash.
@@ -211,6 +435,7 @@ impl HdTerrain {
                     size: piece.size,
                     atlas_origin,
                     hd_origin,
+                    hd_scale: [2, 0],
                 });
             }
         }
@@ -280,48 +505,9 @@ impl HdTerrain {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
-            ty,
-            count: None,
-        };
-        let tex = wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("HD terrain"),
-            entries: &[
-                entry(0, tex),
-                entry(1, tex),
-                entry(2, tex),
-                entry(
-                    3,
-                    wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                ),
-            ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("HD terrain"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("HD terrain"),
-            source: wgpu::ShaderSource::Wgsl(shader_source().into()),
-        });
         self.gpu = Some(Gpu {
             page,
-            layout,
-            pipeline: None,
-            pipeline_layout,
-            shader,
+            pass: HdTerrainPass::new(device),
         });
     }
 
@@ -346,100 +532,25 @@ impl HdTerrain {
         let Some(gpu) = self.gpu.as_mut() else {
             return;
         };
-        if draws.is_empty() || scissor[2] == 0 || scissor[3] == 0 {
-            return;
-        }
-        let format = target.format();
-        if gpu
-            .pipeline
-            .as_ref()
-            .is_none_or(|(cached, _)| *cached != format)
-        {
-            gpu.pipeline = Some((
-                format,
-                create_pipeline(device, &gpu.pipeline_layout, &gpu.shader, format),
-            ));
-        }
-        // Fresh buffers per call: the tiles and the overlays encode in one
-        // submission, and a shared buffer written twice would leave both
-        // passes reading the second call's data.
-        use wgpu::util::DeviceExt;
-        let instances = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("HD terrain draws"),
-            contents: bytemuck::cast_slice(draws),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let size = target.size();
-        let params = Params {
-            frame: [
-                size.width as f32,
-                size.height as f32,
-                scale,
-                if debug { 1.0 } else { 0.0 },
-            ],
-            mode: [if linear { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
-        };
-        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("HD terrain"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let composition_view = composition.create_view(&Default::default());
+        gpu.pass.ensure_pipeline(device, target.format());
         let page_view = gpu.page.create_view(&Default::default());
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("HD terrain"),
-            layout: &gpu.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&composition_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(tiles),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&page_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: uniform.as_entire_binding(),
-                },
-            ],
-        });
-        let right = (scissor[0] + scissor[2]).min(size.width);
-        let bottom = (scissor[1] + scissor[3]).min(size.height);
-        if right <= scissor[0] || bottom <= scissor[1] {
-            return;
-        }
-        let target_view = target.create_view(&Default::default());
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("HD terrain"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &target_view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        pass.set_scissor_rect(
-            scissor[0],
-            scissor[1],
-            right - scissor[0],
-            bottom - scissor[1],
+        gpu.pass.encode(
+            device,
+            encoder,
+            &target.create_view(&Default::default()),
+            composition,
+            tiles,
+            linear,
+            &page_view,
+            &TerrainPlacement {
+                origin: [0.0; 2],
+                scale,
+                mask: None,
+            },
+            scissor,
+            draws,
+            debug,
         );
-        pass.set_pipeline(&gpu.pipeline.as_ref().expect("pipeline").1);
-        pass.set_bind_group(0, &group, &[]);
-        pass.set_vertex_buffer(0, instances.slice(..));
-        pass.draw(0..4, 0..draws.len() as u32);
     }
 }
 
@@ -457,8 +568,9 @@ fn create_pipeline(
     shader: &wgpu::ShaderModule,
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    let attributes =
-        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Uint32x2, 3 => Uint32x2];
+    let attributes = wgpu::vertex_attr_array![
+        0 => Float32x2, 1 => Float32x2, 2 => Uint32x2, 3 => Uint32x2, 4 => Uint32x2
+    ];
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("HD terrain"),
         layout: Some(layout),

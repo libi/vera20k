@@ -1,6 +1,7 @@
-// VERA's HD art terrain, VERA-only: no gamemd counterpart. Draws the 2x
-// upscaled theater tiles over the wheel-zoomed frame, where the native world
-// still shows that tile's own pixel.
+// VERA's HD art terrain, VERA-only: no gamemd counterpart. Draws HD tiles
+// (the art pack's 2x upscales, or a tile picture's own pixels at its scale,
+// `render::picture_zoom`) over the zoomed frame or the zoomed window copy,
+// where the native world still shows that tile's own pixel.
 //
 // As `hd_art.wgsl`: the world is composed at native pixels first, exactly as
 // before; this pass only replaces pixels of the zoomed copy. For each frame
@@ -16,16 +17,24 @@
 // `srgb_encode` / `srgb_decode` are prepended by hd_terrain.rs.
 
 struct Params {
-    // Frame width, height, frame pixels per native pixel, debug view.
+    // Target width, height, target pixels per native pixel, debug view.
     frame: vec4f,
-    // x: 1 when the atlas is an sRGB texture (its loads are linear already).
+    // x: 1 when the atlas is an sRGB texture (its loads are linear already);
+    // y: 1 when a window pixel whose frame pixel changed after the world went
+    // in (UI drawn over it) keeps what it has; z: window pixels per frame
+    // pixel.
     mode: vec4f,
+    // xy: the target pixel of native pixel (0, 0); zw: the window pixel of
+    // frame pixel (0, 0).
+    place: vec4f,
 };
 
 @group(0) @binding(0) var composition: texture_2d<f32>;
 @group(0) @binding(1) var tiles: texture_2d<f32>;
 @group(0) @binding(2) var hd_tiles: texture_2d<f32>;
 @group(0) @binding(3) var<uniform> params: Params;
+@group(0) @binding(4) var frame_now: texture_2d<f32>;
+@group(0) @binding(5) var frame_before: texture_2d<f32>;
 
 struct Instance {
     // Native composition pixel of the tile's top-left corner.
@@ -34,8 +43,10 @@ struct Instance {
     @location(1) size: vec2f,
     // The tile's top-left in the tile atlas.
     @location(2) atlas_origin: vec2u,
-    // The tile's top-left in the HD page (2x pixels).
+    // The tile's top-left in the HD page, in HD pixels.
     @location(3) hd_origin: vec2u,
+    // x: HD pixels per native pixel.
+    @location(4) hd_scale: vec2u,
 };
 
 struct VertexOutput {
@@ -44,12 +55,13 @@ struct VertexOutput {
     @location(1) @interpolate(flat) size: vec2f,
     @location(2) @interpolate(flat) atlas_origin: vec2u,
     @location(3) @interpolate(flat) hd_origin: vec2u,
+    @location(4) @interpolate(flat) hd_scale: f32,
 };
 
 @vertex
 fn vs_main(@builtin(vertex_index) index: u32, instance: Instance) -> VertexOutput {
     let corner = vec2f(f32(index & 1u), f32((index >> 1u) & 1u));
-    let frame_px = (instance.origin + corner * instance.size) * params.frame.z;
+    let frame_px = params.place.xy + (instance.origin + corner * instance.size) * params.frame.z;
     var out: VertexOutput;
     out.position = vec4f(
         frame_px.x / params.frame.x * 2.0 - 1.0,
@@ -61,6 +73,7 @@ fn vs_main(@builtin(vertex_index) index: u32, instance: Instance) -> VertexOutpu
     out.size = instance.size;
     out.atlas_origin = instance.atlas_origin;
     out.hd_origin = instance.hd_origin;
+    out.hd_scale = f32(instance.hd_scale.x);
     return out;
 }
 
@@ -105,22 +118,30 @@ fn pixel_light(input: VertexOutput, local: vec2i) -> vec4f {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4f {
     let scale = params.frame.z;
-    let at = input.position.xy / scale - input.origin;
+    if params.mode.y != 0.0 {
+        let last = vec2i(textureDimensions(frame_now)) - 1;
+        let frame = clamp(vec2i(floor((input.position.xy - params.place.zw) / params.mode.z)), vec2i(0), last);
+        if any(textureLoad(frame_now, frame, 0) != textureLoad(frame_before, frame, 0)) {
+            discard;
+        }
+    }
+    let at = (input.position.xy - params.place.xy) / scale - input.origin;
     let local = vec2i(floor(at));
     let own = pixel_light(input, local);
     if own.w == 0.0 {
         discard;
     }
 
-    // The HD pixel: two per native pixel, inside the tile. From 200% each
-    // frame pixel takes the nearest; below it the four around its place
-    // blend (at 100% exactly the native pixel's own four), skipping clear
-    // ones, so the art is resampled instead of thinned.
-    let fine = clamp(at * 2.0, vec2f(0.0), input.size * 2.0 - 1.0);
+    // The HD pixel: `hd_scale` per native pixel, inside the tile. From that
+    // zoom on each target pixel takes the nearest; below it the four around
+    // its place blend, skipping clear ones, so the art is resampled instead
+    // of thinned.
+    let hs = input.hd_scale;
+    let fine = clamp(at * hs, vec2f(0.0), input.size * hs - 1.0);
     var hd = textureLoad(hd_tiles, input.hd_origin + vec2u(fine), 0);
-    if scale < 2.0 {
-        let last = vec2i(input.size * 2.0) - 1;
-        let p = at * 2.0 - 0.5;
+    if scale < hs {
+        let last = vec2i(input.size * hs) - 1;
+        let p = at * hs - 0.5;
         let c = vec2i(floor(p));
         let w = p - floor(p);
         var sum = vec4f(0.0);

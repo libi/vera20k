@@ -409,12 +409,15 @@ impl TacticalCaptureSession {
             // step advancing, until those it draws are on the GPU, so the
             // capture shows them sharp. A twin that cannot fit the budget
             // stops the wait after `HD_SETTLE_DRAWS_MAX` draws.
-            let hd_settled = state
-                .match_state
-                .match_presentation
+            let presentation = &state.match_state.match_presentation;
+            let hd_settled = presentation
                 .sprite_atlas
                 .as_ref()
-                .is_none_or(|atlas| atlas.picture_hd().settled());
+                .is_none_or(|atlas| atlas.picture_hd().settled())
+                && presentation
+                    .tile_atlas
+                    .as_ref()
+                    .is_none_or(|tiles| tiles.picture_hd().settled());
             let map = self.map_state_mut()?;
             let settle_draws = map.hd_settle_draws.unwrap_or(0);
             if !hd_settled && settle_draws < HD_SETTLE_DRAWS_MAX {

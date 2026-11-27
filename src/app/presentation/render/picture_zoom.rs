@@ -23,6 +23,7 @@ use crate::app::renderer_state::RendererState;
 use crate::render::batch::{BatchTexture, SpriteInstance};
 use crate::render::picture_zoom::{
     HdDepth, HdMask, HdPlacement, HdRun, HdSource, HdTarget, PictureHdPage, PictureZoomPass,
+    TileHdDraw,
 };
 use crate::render::selection_overlay::InterfaceStrip;
 use crate::render::tactical_draw_plan::RenderZPolicy;
@@ -42,6 +43,10 @@ fn has_hd_pages(presentation: &MatchPresentationState) -> bool {
             .beacon_art
             .as_ref()
             .is_some_and(|art| art.has_hd_pages())
+        || presentation
+            .tile_atlas
+            .as_ref()
+            .is_some_and(|tiles| tiles.picture_hd().has_twins())
 }
 
 /// The HD twin of `source` and the page the world drew it from.
@@ -84,12 +89,15 @@ pub(super) fn needs_world_pass(
 }
 
 /// Build this frame's HD instances from `layers`, the beacon rows'
-/// `beacons` and the `placement` cells, or clear them when nothing is
-/// magnified or nothing draws from an HD page.
+/// `beacons` and the `placement` cells, and its tiles from the `terrain`
+/// cells the world drew, or clear them when nothing is magnified or nothing
+/// draws from an HD page.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn prepare(
     renderer: &mut RendererState,
     presentation: &mut MatchPresentationState,
     screen: &GameScreen,
+    terrain: &[SpriteInstance],
     layers: &[ObjectLayerPass; 5],
     beacons: &[Vec<SpriteInstance>],
     placement: &[SpriteInstance],
@@ -115,6 +123,9 @@ pub(super) fn prepare(
         if let Some(atlas) = presentation.sprite_atlas.as_mut() {
             atlas.picture_hd_mut().idle();
         }
+        if let Some(tiles) = presentation.tile_atlas.as_mut() {
+            tiles.picture_hd_mut().idle();
+        }
         clear(renderer);
         return;
     };
@@ -131,6 +142,18 @@ pub(super) fn prepare(
             .picture_hd_mut()
             .end_frame(Some((&gpu.device, &gpu.queue)));
     }
+    let tiles = presentation
+        .tile_atlas
+        .as_mut()
+        .filter(|tiles| tiles.picture_hd().has_twins())
+        .map_or_else(Vec::new, |tiles| {
+            tiles.picture_hd_mut().begin_frame();
+            let draws = tile_draws(terrain, |uv| tiles.picture_twin(uv));
+            tiles
+                .picture_hd_mut()
+                .end_frame(Some((&gpu.device, &gpu.queue)));
+            draws
+        });
     let presentation = &*presentation;
     interface_instances(&mut list, layers, beacons, placement, |strip| {
         hd_page(presentation, HdSource::Interface(strip)).is_some()
@@ -140,7 +163,7 @@ pub(super) fn prepare(
         hd_uvs,
         runs,
     } = list;
-    if runs.is_empty() {
+    if runs.is_empty() && tiles.is_empty() {
         clear(renderer);
         return;
     }
@@ -152,13 +175,52 @@ pub(super) fn prepare(
             &renderer.batch_renderer,
         )
     });
-    pass.set_frame(&gpu.device, &gpu.queue, &instances, &hd_uvs, runs, target);
+    pass.set_frame(
+        &gpu.device,
+        &gpu.queue,
+        &instances,
+        &hd_uvs,
+        runs,
+        tiles,
+        target,
+    );
 }
 
 fn clear(renderer: &mut RendererState) {
     if let Some(pass) = renderer.picture_zoom.as_mut() {
         pass.clear();
     }
+}
+
+/// The terrain cells to draw again from their tile pictures' twins, by HD
+/// page, in the world's order: each cell whose `twin` (atlas origin and
+/// size, HD page, place and scale) is on the GPU and that the world drew at
+/// its own size, as the terrain HD pass takes a tile.
+fn tile_draws(
+    terrain: &[SpriteInstance],
+    mut twin: impl FnMut([f32; 2]) -> Option<([u32; 2], [u32; 2], usize, [u32; 2], u32)>,
+) -> Vec<(usize, Vec<TileHdDraw>)> {
+    let mut pages: Vec<(usize, Vec<TileHdDraw>)> = Vec::new();
+    for instance in terrain {
+        let Some((atlas_origin, size, page, hd_origin, scale)) = twin(instance.uv_origin) else {
+            continue;
+        };
+        if instance.size != size.map(|side| side as f32) {
+            continue;
+        }
+        let draw = TileHdDraw {
+            position: instance.position,
+            size: instance.size,
+            atlas_origin,
+            hd_origin,
+            scale,
+        };
+        match pages.iter_mut().find(|(at, _)| *at == page) {
+            Some((_, draws)) => draws.push(draw),
+            None => pages.push((page, vec![draw])),
+        }
+    }
+    pages
 }
 
 /// The instances to draw again, their UV rectangles on their HD pages, in
@@ -465,6 +527,20 @@ fn draw(
         usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
         ..Default::default()
     });
+    // The ground first, as the world drew it before everything over it.
+    if let Some(tiles) = presentation.tile_atlas.as_ref() {
+        pass.draw_tiles(
+            &gpu.device,
+            encoder,
+            view,
+            placement,
+            composition,
+            &tiles.texture.view,
+            &|page| tiles.picture_hd().page(page),
+            batch.camera_uniform().camera_pos,
+            scissor,
+        );
+    }
     pass.draw(
         &gpu.device,
         &gpu.queue,

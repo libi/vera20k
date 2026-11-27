@@ -59,6 +59,10 @@ pub struct TileAtlas {
     /// bits → its [`crate::render::hd_terrain::tile_hash`], its atlas pixel
     /// origin and size.
     hd_tiles: HashMap<[u32; 2], (u64, [u32; 2], [u32; 2])>,
+    /// VERA-only, experimental (docs/picture-model-art.md): the HD twins of
+    /// the cells drawn from tile pictures above 1x, made when the zoomed
+    /// draw asks for them (`render::picture_hd`). Empty without such art.
+    picture_hd: crate::render::picture_hd::PictureHdStore,
 }
 
 impl TileAtlas {
@@ -66,6 +70,28 @@ impl TileAtlas {
     /// origin and size.
     pub(crate) fn hd_tile(&self, uv_origin: [f32; 2]) -> Option<(u64, [u32; 2], [u32; 2])> {
         self.hd_tiles.get(&uv_origin.map(f32::to_bits)).copied()
+    }
+
+    /// VERA-only, experimental: the tile pictures' HD twins.
+    pub(crate) fn picture_hd(&self) -> &crate::render::picture_hd::PictureHdStore {
+        &self.picture_hd
+    }
+
+    /// VERA-only, experimental: the zoomed draw of the cell at `uv_origin`
+    /// from its tile picture: its atlas pixel origin and size, the HD page,
+    /// the twin's place there and its scale; None when the cell has no
+    /// picture above 1x or its twin is not on the GPU yet, which asks for it.
+    pub(crate) fn picture_twin(
+        &mut self,
+        uv_origin: [f32; 2],
+    ) -> Option<([u32; 2], [u32; 2], usize, [u32; 2], u32)> {
+        let (_, atlas_origin, size) = *self.hd_tiles.get(&uv_origin.map(f32::to_bits))?;
+        let (page, hd_origin, scale) = self.picture_hd.lookup_texels(0, uv_origin)?;
+        Some((atlas_origin, size, page, hd_origin, scale))
+    }
+
+    pub(crate) fn picture_hd_mut(&mut self) -> &mut crate::render::picture_hd::PictureHdStore {
+        &mut self.picture_hd
     }
 
     /// Look up UV and rendering data for a tile. Returns None if not in the atlas.
@@ -103,6 +129,7 @@ pub fn build_atlas(
             zdepth_bind_group,
             uv_map: LookupMap::default(),
             hd_tiles: HashMap::new(),
+            picture_hd: Default::default(),
         };
     }
 
@@ -146,6 +173,11 @@ pub fn build_atlas(
     let aw: f32 = atlas_width as f32;
     let ah: f32 = atlas_height as f32;
     let mut hd_tiles = HashMap::with_capacity(plan.placements.len());
+    let mut picture_hd = crate::render::picture_hd::PictureHdStore::default();
+    // The zoomed draw reads depth, which the WebGL2 fallback cannot.
+    let zoomed = !crate::render::gpu::webgl_fallback(device);
+    let mut picture_files: HashMap<&str, std::sync::Arc<crate::render::picture_atlas::HdFiles>> =
+        HashMap::new();
 
     for placed in &plan.placements {
         let [px, py] = placed.origin;
@@ -169,11 +201,41 @@ pub fn build_atlas(
             ),
         );
 
+        // VERA-only, experimental: a cell of a tile picture above 1x keeps
+        // where its own pixels are, for the zoomed draw; the twin is the
+        // top-left `width x height` game pixels of its frame, the region its
+        // 1x pixels were shrunk from (`map::theater::tile_rgba`).
+        let uv_size = [tile.width as f32 / aw, tile.height as f32 / ah];
+        if let Some(picture) = tile.picture.as_ref().filter(|_| zoomed) {
+            let files = picture_files
+                .entry(picture.file.as_str())
+                .or_insert_with(|| {
+                    crate::render::picture_atlas::HdFiles::tile(
+                        &picture.file,
+                        picture.bytes.clone(),
+                        picture.scale,
+                    )
+                })
+                .clone();
+            picture_hd.register(
+                0,
+                uv_origin,
+                uv_size,
+                crate::render::picture_atlas::HdTwin {
+                    files,
+                    frame: picture.frame,
+                    origin: [0, 0],
+                    size: [tile.width, tile.height],
+                    house: None,
+                },
+            );
+        }
+
         uv_map.insert(
             key,
             TileUV {
                 uv_origin: [px as f32 / aw, py as f32 / ah],
-                uv_size: [tile.width as f32 / aw, tile.height as f32 / ah],
+                uv_size,
                 pixel_size: [tile.width as f32, tile.height as f32],
                 draw_offset: [tile.offset_x as f32, tile.offset_y as f32],
             },
@@ -211,6 +273,7 @@ pub fn build_atlas(
         zdepth_bind_group,
         uv_map,
         hd_tiles,
+        picture_hd,
     }
 }
 

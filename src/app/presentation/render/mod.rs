@@ -1080,6 +1080,7 @@ pub(crate) fn render_game(
         &mut state.renderer,
         &mut state.match_state.match_presentation,
         &state.frontend.screen,
+        &world.terrain.normal,
         &world.object_layers,
         &ui.beacons,
         &ui.placement,

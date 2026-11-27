@@ -1545,11 +1545,18 @@ fn a_tile_picture_draws_its_cells_and_a_misfit_keeps_the_tmp() {
     );
     let tmp = TmpFile::from_bytes(&one_cell_tmp()).unwrap();
     assert_eq!(drawn.depth, tmp.tiles[0].as_ref().unwrap().depth);
+    // The zoomed draw finds the cell's own pixels: frame 0 of hd01.png at 2x.
+    let picture = drawn.picture.as_ref().expect("a 2x cell keeps its picture");
+    assert_eq!(
+        (picture.file.as_str(), picture.scale, picture.frame),
+        ("hd01.png", 2, 0)
+    );
     assert_eq!(
         images[&key(1)].rgba,
         tmp.tile_to_rgba(0, &palette).unwrap(),
         "a 9x4 picture is no whole multiple of the 8x4 cell: the TMP draws"
     );
+    assert!(images[&key(1)].picture.is_none());
 }
 
 /// VERA: a load of the original terrain reads the theater INI and tiles a

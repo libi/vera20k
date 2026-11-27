@@ -150,6 +150,25 @@ impl std::fmt::Debug for HdFiles {
 }
 
 impl HdFiles {
+    /// The files of a tile picture (`map::theater::TileImagePicture`): the
+    /// picture `file` as `bytes`, `scale` picture pixels per game pixel, no
+    /// mask (a tile has no house colour or unlit pixels).
+    pub(crate) fn tile(file: &str, bytes: SharedBytes, scale: u32) -> Arc<Self> {
+        Arc::new(Self {
+            source: PictureSource {
+                section: file.to_owned(),
+                decl: crate::rules::art_data::PictureDecl {
+                    file: file.to_owned(),
+                    size: None,
+                },
+            },
+            file: file.to_owned(),
+            picture: bytes,
+            mask: None,
+            scale,
+        })
+    }
+
     /// Decode the picture and its mask one frame at a time up to frame
     /// `last`, handing `each` every frame's index, its RGBA and its mask's
     /// RGBA (`width` picture pixels a row). Holds one frame of each.
