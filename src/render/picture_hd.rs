@@ -63,6 +63,8 @@ enum TwinState {
 struct Twin {
     request: HdTwin,
     state: TwinState,
+    /// The frame it was last drawn.
+    last_used: u64,
 }
 
 /// What a worker made of one twin: its premultiplied colour with its mips,
@@ -151,6 +153,8 @@ pub(crate) struct PictureHdStore {
     frame: u64,
     idle_frames: u32,
     budget: u64,
+    /// Twins the current magnified frame drew that were not on the GPU.
+    unready: usize,
 }
 
 impl PictureHdStore {
@@ -181,6 +185,7 @@ impl PictureHdStore {
             self.twins.push(Twin {
                 request: twin,
                 state: TwinState::Missing,
+                last_used: 0,
             });
             next
         });
@@ -208,6 +213,11 @@ impl PictureHdStore {
             self.entries
                 .get(&(page, uv_origin[0].to_bits(), uv_origin[1].to_bits()))?;
         let twin = &mut self.twins[id as usize];
+        twin.last_used = self.frame;
+        if !matches!(twin.state, TwinState::Resident { .. } | TwinState::Failed) {
+            // Not drawn sharp this frame: the store has not settled.
+            self.unready += 1;
+        }
         match twin.state {
             TwinState::Resident { page, origin } => {
                 let (book, _) = self.pages[page].as_mut()?;
@@ -249,16 +259,25 @@ impl PictureHdStore {
         }
     }
 
-    /// Start a magnified frame: upload what the workers made, at most
-    /// [`UPLOAD_BYTES_PER_FRAME`] beyond the first twin.
-    pub(crate) fn begin_frame(&mut self, device: Option<(&wgpu::Device, &wgpu::Queue)>) {
+    /// Start a magnified frame: take in what the workers made, for
+    /// [`Self::end_frame`] to upload once this frame's lookups have said
+    /// which pages it draws.
+    pub(crate) fn begin_frame(&mut self) {
         self.frame += 1;
         self.idle_frames = 0;
+        self.unready = 0;
         if let Some((_, receiver)) = &self.channel {
             while let Ok(batch) = receiver.try_recv() {
                 self.ready.extend(batch);
             }
         }
+    }
+
+    /// End a magnified frame: upload what the workers made, at most
+    /// [`UPLOAD_BYTES_PER_FRAME`] beyond the first twin, the next frame
+    /// drawing it, then hand the twins this frame asked for to the workers
+    /// ([`Self::dispatch`]).
+    pub(crate) fn end_frame(&mut self, device: Option<(&wgpu::Device, &wgpu::Queue)>) {
         let mut uploaded = 0;
         while uploaded == 0 || uploaded < UPLOAD_BYTES_PER_FRAME {
             let Some(decoded) = self.ready.pop_front() else {
@@ -267,6 +286,7 @@ impl PictureHdStore {
             self.in_flight = self.in_flight.saturating_sub(1);
             uploaded += self.upload(device, decoded).max(1);
         }
+        self.dispatch();
     }
 
     /// Place and upload one decoded twin; the level-0 bytes it uploaded.
@@ -338,15 +358,9 @@ impl PictureHdStore {
         }
         let bytes = page_bytes(page_size, levels);
         while self.resident_bytes + bytes > self.budget() {
-            let oldest = self
-                .pages
-                .iter()
-                .enumerate()
-                .filter_map(|(index, page)| Some((index, page.as_ref()?.0.last_used)))
-                .filter(|&(_, used)| used < self.frame)
-                .min_by_key(|&(_, used)| used)?;
-            log::info!("Picture HD page {} dropped for room", oldest.0);
-            self.evict(oldest.0);
+            let victim = self.victim()?;
+            log::info!("Picture HD page {victim} dropped for room");
+            self.evict(victim);
         }
         let gpu = device.map(|device| create_page(device, page_size, levels));
         let mut book = PageBook {
@@ -375,6 +389,44 @@ impl PictureHdStore {
         Some((index, origin))
     }
 
+    /// The page to drop for room: the one drawn longest ago, else, when
+    /// every page was drawn this frame, the one with the fewest twins drawn
+    /// this frame among those holding twins that were not, so pages that
+    /// keep one visible twin among many stale ones do not hold the budget
+    /// for ever. None when every twin on every page was drawn this frame.
+    fn victim(&self) -> Option<usize> {
+        let pages = || {
+            self.pages
+                .iter()
+                .enumerate()
+                .filter_map(|(index, page)| Some((index, &page.as_ref()?.0)))
+        };
+        if let Some((index, _)) = pages()
+            .filter(|(_, book)| book.last_used < self.frame)
+            .min_by_key(|(_, book)| book.last_used)
+        {
+            return Some(index);
+        }
+        pages()
+            .filter_map(|(index, book)| {
+                let drawn = book
+                    .twins
+                    .iter()
+                    .filter(|&&id| self.twins[id as usize].last_used >= self.frame)
+                    .count();
+                (drawn < book.twins.len()).then_some((index, drawn))
+            })
+            .min_by_key(|&(_, drawn)| drawn)
+            .map(|(index, _)| index)
+    }
+
+    /// Whether every twin the last magnified frame drew was on the GPU (or
+    /// cannot be made), with nothing asked for still on its way: a capture
+    /// of the next frame shows the art sharp wherever it can be.
+    pub(crate) fn settled(&self) -> bool {
+        self.unready == 0 && self.in_flight == 0 && self.ready.is_empty()
+    }
+
     /// Drop HD page `page`; its twins are missing again.
     fn evict(&mut self, page: usize) {
         let Some((book, _)) = self.pages.get_mut(page).and_then(Option::take) else {
@@ -386,19 +438,14 @@ impl PictureHdStore {
         }
     }
 
-    /// End a magnified frame: hand the twins asked for this frame to the
-    /// workers, up to [`TWINS_IN_FLIGHT`] waiting at once, one job per
-    /// picture so each is decoded once. The rest are asked for again when
-    /// drawn again.
-    pub(crate) fn dispatch(&mut self) {
+    /// Hand the twins asked for this frame to the workers, up to
+    /// [`TWINS_IN_FLIGHT`] waiting at once, one job per picture so each is
+    /// decoded once. The rest are asked for again when drawn again.
+    fn dispatch(&mut self) {
         let wanted = std::mem::take(&mut self.wanted);
-        // No room this frame: every page was drawn and the budget is full.
+        // No room: the budget is full and no page can go ([`Self::victim`]).
         let full = self.resident_bytes + page_bytes([HD_PAGE_SIDE; 2], 1) > self.budget()
-            && self
-                .pages
-                .iter()
-                .flatten()
-                .all(|(book, _)| book.last_used >= self.frame);
+            && self.victim().is_none();
         let room = if full {
             0
         } else {
@@ -732,7 +779,9 @@ mod tests {
             store.register(0, [f32::from(house) / 4.0, 0.0], [0.25, 1.0], twin);
         }
         let upload = |store: &mut PictureHdStore, twin: TwinId| {
+            // Asked for by this frame's draw.
             store.twins[twin as usize].state = TwinState::Queued;
+            store.twins[twin as usize].last_used = store.frame;
             let whole_page = (levels, [HD_PAGE_SIDE; 2], Vec::new(), Vec::new());
             store.upload(
                 None,
@@ -743,10 +792,10 @@ mod tests {
             );
             store.twins[twin as usize].state
         };
-        store.begin_frame(None);
+        store.begin_frame();
         upload(&mut store, 0);
         upload(&mut store, 1);
-        store.begin_frame(None);
+        store.begin_frame();
         // Twin 1 is drawn this frame; twin 0's page is the oldest.
         assert!(store.lookup(0, [0.25, 0.0], [0.25, 1.0]).is_some());
         assert_eq!(
@@ -763,5 +812,64 @@ mod tests {
         }
         assert_eq!((store.resident_bytes, store.pages.len()), (0, 0));
         assert_eq!(store.twins[1].state, TwinState::Missing);
+    }
+
+    /// A page that keeps one twin on screen among stale ones does not hold
+    /// the budget: with no page left undrawn, the one with the fewest twins
+    /// drawn this frame goes, and the store settles once nothing drawn is
+    /// missing or on its way.
+    #[test]
+    fn a_page_of_mostly_stale_twins_gives_way_when_the_budget_is_full() {
+        let frames = decoded(
+            2,
+            2,
+            &[[HOUSE; 4].concat()],
+            Some(&[[HOUSE; 4].concat()]),
+            [1, 1],
+        );
+        let sprite = frames.sprite(0, None).unwrap();
+        let levels = mip_levels(2, [HD_PAGE_SIDE; 2]);
+        let mut store = PictureHdStore {
+            budget: page_bytes([HD_PAGE_SIDE; 2], levels),
+            ..Default::default()
+        };
+        let ramp = ramp();
+        for house in 0..3u8 {
+            let twin = frames
+                .hd_twin(0, &sprite, Some((HouseColorIndex(house), &ramp)))
+                .unwrap();
+            store.register(0, [f32::from(house) / 4.0, 0.0], [0.25, 1.0], twin);
+        }
+        // Two 1000x2000 twins fill a 2048 page, with the gap between.
+        let upload = |store: &mut PictureHdStore, twin: TwinId| {
+            store.twins[twin as usize].state = TwinState::Queued;
+            store.twins[twin as usize].last_used = store.frame;
+            let quarter = (levels, [1000, 2000], Vec::new(), Vec::new());
+            store.upload(
+                None,
+                Decoded {
+                    twin,
+                    pixels: Some(quarter),
+                },
+            );
+            store.twins[twin as usize].state
+        };
+        store.begin_frame();
+        upload(&mut store, 0);
+        upload(&mut store, 1);
+        store.begin_frame();
+        // Only twin 1 is on screen now, and twin 2 comes into view.
+        assert!(store.lookup(0, [0.25, 0.0], [0.25, 1.0]).is_some());
+        assert!(store.lookup(0, [0.5, 0.0], [0.25, 1.0]).is_none());
+        assert!(!store.settled(), "twin 2 is missing");
+        assert!(matches!(
+            upload(&mut store, 2),
+            TwinState::Resident { page: 0, .. }
+        ));
+        assert_eq!(store.twins[0].state, TwinState::Missing);
+        store.wanted.clear();
+        store.begin_frame();
+        assert!(store.lookup(0, [0.5, 0.0], [0.25, 1.0]).is_some());
+        assert!(store.settled());
     }
 }

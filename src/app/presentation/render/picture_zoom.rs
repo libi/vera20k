@@ -20,13 +20,13 @@
 use super::draw_plan_lowering::{ObjectDrawRun, ObjectExtrasRun, ObjectLayerPass, ObjectTexture};
 use crate::app::presentation::state::MatchPresentationState;
 use crate::app::renderer_state::RendererState;
-use crate::ui::game_screen::GameScreen;
 use crate::render::batch::{BatchTexture, SpriteInstance};
 use crate::render::picture_zoom::{
     HdDepth, HdMask, HdPlacement, HdRun, HdSource, HdTarget, PictureHdPage, PictureZoomPass,
 };
 use crate::render::selection_overlay::InterfaceStrip;
 use crate::render::tactical_draw_plan::RenderZPolicy;
+use crate::ui::game_screen::GameScreen;
 
 /// Whether any art this match draws has an HD twin.
 fn has_hd_pages(presentation: &MatchPresentationState) -> bool {
@@ -121,15 +121,15 @@ pub(super) fn prepare(
     let gpu = &renderer.gpu;
     let mut list = HdList::default();
     if let Some(atlas) = presentation.sprite_atlas.as_mut() {
-        // Upload what is ready, find each instance's twin, ask for those
-        // missing.
-        atlas
-            .picture_hd_mut()
-            .begin_frame(Some((&gpu.device, &gpu.queue)));
+        // Find each instance's twin, then upload what is ready and ask for
+        // those missing.
+        atlas.picture_hd_mut().begin_frame();
         world_instances(&mut list, layers, |page, instance| {
             atlas.hd_twin_of(page, instance.uv_origin, instance.uv_size)
         });
-        atlas.picture_hd_mut().dispatch();
+        atlas
+            .picture_hd_mut()
+            .end_frame(Some((&gpu.device, &gpu.queue)));
     }
     let presentation = &*presentation;
     interface_instances(&mut list, layers, beacons, placement, |strip| {
