@@ -1912,7 +1912,11 @@ fn bad_picture_art_reports_one_line_per_problem() {
     let ini = IniFile::from_str("[PMNOTICE]\nPicture=pmnotice.png\nPictureSize=0,30\n");
     let art = ArtRegistry::from_ini(&ini);
     let _read_again = ArtRegistry::from_ini(&ini);
-    let decl = art.get("PMNOTICE").unwrap().picture.clone().unwrap();
+    let decl = art
+        .resolve_declared_picture("PMNOTICE", "")
+        .unwrap()
+        .1
+        .clone();
     assert_eq!(decl.size, None, "the refused size");
     for _ in 0..2 {
         assert!(
@@ -1951,4 +1955,62 @@ fn retail_art_declares_no_picture() {
         .map(|(name, _)| name)
         .collect();
     assert!(declared.is_empty(), "{declared:?}");
+}
+
+/// VERA's drawing keys (`VERA_ART_KEYS`) do not count in the art INI's
+/// multiplayer digest or the art part's differing sections, nor does a
+/// section they leave empty; any other change still counts.
+#[test]
+fn the_art_digest_leaves_out_veras_drawing_keys() {
+    let retail = IniFile::from_str("[GI]\nSequence=GISequence\n[EMPTY]\n");
+    let pack = IniFile::from_str(
+        "[GI]\nPicture=GI.png\nSequence=GISequence\nPictureSize=40,50\n\
+         [EMPTY]\n[APMUZZLE]\nPicture=APMUZZLE.png\n\
+         [HTNK]\nModel=HTNK.glb\nModelSize=256\nCameoPicture=a.png\nAltCameoPicture=b.png\n",
+    );
+    assert_eq!(
+        art_multiplayer_digest(&pack),
+        art_multiplayer_digest(&retail)
+    );
+    assert_ne!(pack.multiplayer_digest(), retail.multiplayer_digest());
+    assert!(
+        pack.differing_sections_without(&retail, VERA_ART_KEYS)
+            .is_empty()
+    );
+    let changed = IniFile::from_str("[GI]\nPicture=GI.png\nSequence=Other\n[EMPTY]\n");
+    assert_ne!(
+        art_multiplayer_digest(&changed),
+        art_multiplayer_digest(&retail)
+    );
+}
+
+/// A section with only VERA's drawing keys is no art section to the
+/// simulation: the AnimType sweep does not read it as its ART body, and the
+/// art registry's lookups do not find it, while its picture still draws.
+#[test]
+fn a_section_of_only_veras_drawing_keys_is_no_art_body() {
+    use crate::rules::{native_processing::RulesLayerStack, ruleset::RuleSet};
+    let rules_ini = IniFile::from_str("[General]\nMetallicDebris=APMUZZLE,PLAIN\n");
+    let art_ini = IniFile::from_str("[APMUZZLE]\nPicture=APMUZZLE.png\n[PLAIN]\nRate=1\n");
+    let processed = RulesLayerStack::new(rules_ini)
+        .process_with_fixed_art(&art_ini)
+        .unwrap();
+    let rules = RuleSet::from_processed_rules(&processed).unwrap();
+    let read: Vec<_> = rules
+        .anim_type_art_read_states()
+        .iter()
+        .map(|(name, read)| (name.as_str(), *read))
+        .collect();
+    assert_eq!(read, [("APMUZZLE", false), ("PLAIN", true)]);
+    assert!(sim_art_section(&art_ini, "APMUZZLE").is_none());
+    assert!(sim_art_section(&art_ini, "PLAIN").is_some());
+
+    let art = ArtRegistry::from_ini(&art_ini);
+    assert!(art.get("APMUZZLE").is_none(), "no metadata entry");
+    assert!(art.declares_picture("APMUZZLE"));
+    assert_eq!(
+        art.resolve_declared_picture("APMUZZLE", "")
+            .map(|(section, decl)| (section, decl.file.as_str())),
+        Some(("APMUZZLE", "APMUZZLE.png"))
+    );
 }

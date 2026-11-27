@@ -161,6 +161,44 @@ fn parse_model_decl(section_name: &str, section: &IniSection) -> Option<ModelDec
     Some(ModelDecl { file, size })
 }
 
+/// VERA-only, experimental (docs/picture-model-art.md): the art keys that
+/// only choose what is drawn. No simulation reader takes them, so a peer
+/// with picture or model art agrees with one without: the multiplayer digest
+/// of the art INI leaves them out ([`art_multiplayer_digest`]), and a section
+/// holding nothing else is no art section to the simulation
+/// ([`sim_art_section`]).
+pub const VERA_ART_KEYS: &[&str] = &[
+    "Picture",
+    "PictureSize",
+    "CameoPicture",
+    "AltCameoPicture",
+    "Model",
+    "ModelSize",
+];
+
+/// Whether `section` holds VERA's drawing keys ([`VERA_ART_KEYS`]) and
+/// nothing else: a section a picture or model pack adds for a type the
+/// original art gives none.
+pub fn vera_only_section(section: &IniSection) -> bool {
+    let mut keys = section.physical_keys().peekable();
+    keys.peek().is_some() && keys.all(|key| VERA_ART_KEYS.contains(&key))
+}
+
+/// The art INI's section `name` as the simulation reads it: None for a
+/// section with only VERA's drawing keys ([`vera_only_section`]), as for a
+/// missing one.
+pub fn sim_art_section<'a>(art: &'a IniFile, name: &str) -> Option<&'a IniSection> {
+    art.section(name)
+        .filter(|section| !vera_only_section(section))
+}
+
+/// The art INI's multiplayer digest (`IniFile::multiplayer_digest`) without
+/// VERA's drawing keys ([`VERA_ART_KEYS`]), and without the sections that
+/// leaves empty: art packs agree with the original art.
+pub fn art_multiplayer_digest(art: &IniFile) -> String {
+    art.multiplayer_digest_without(VERA_ART_KEYS)
+}
+
 /// Per-object art configuration parsed from an art.ini section.
 #[derive(Debug, Clone)]
 pub struct ArtEntry {
@@ -1276,6 +1314,12 @@ pub struct ArtRegistry {
     /// Derived uppercase lookup -> exact entry key for legacy visual consumers.
     /// Rebuilt with entries; preserves their former last-wins folded lookup.
     entry_names: LookupMap<String, String>,
+    /// VERA-only, experimental: the sections with only VERA's drawing keys
+    /// ([`vera_only_section`]), kept out of `entries` so nothing the
+    /// simulation reads finds them; only the picture, model and cameo
+    /// declarations look here. Keyed as `entries` and `entry_names`.
+    vera_entries: LookupMap<String, ArtEntry>,
+    vera_entry_names: LookupMap<String, String>,
     /// section ID (uppercase) -> `CanHideThings=`. Missing sections default true.
     can_hide_things: HashMap<String, bool>,
     /// section ID (uppercase) -> `OccupyHeight=`, defaulting to art `Height=`.
@@ -1553,6 +1597,8 @@ impl ArtRegistry {
     pub fn from_ini(ini: &IniFile) -> Self {
         let mut entries: LookupMap<String, ArtEntry> = LookupMap::default();
         let mut entry_names: LookupMap<String, String> = LookupMap::default();
+        let mut vera_entries: LookupMap<String, ArtEntry> = LookupMap::default();
+        let mut vera_entry_names: LookupMap<String, String> = LookupMap::default();
         let mut can_hide_things: HashMap<String, bool> = HashMap::new();
         let mut occupy_heights: HashMap<String, i32> = HashMap::new();
         let mut anim_runtime_configs = AnimConfigs::default();
@@ -1746,10 +1792,18 @@ impl ArtRegistry {
             let normal_z_adjust: i32 = section.read_int("NormalZAdjust", 0);
 
             let section_key = section_name.to_uppercase();
-            can_hide_things.insert(section_key.clone(), can_hide);
-            occupy_heights.insert(section_key.clone(), occupy_height);
-            anim_runtime_configs.insert(section_name.to_ascii_uppercase(), anim_runtime_config);
-            anim_theater_flags.insert(section_key.clone(), (anim_theater, anim_new_theater));
+            let vera_only = vera_only_section(section);
+            if !vera_only {
+                can_hide_things.insert(section_key.clone(), can_hide);
+                occupy_heights.insert(section_key.clone(), occupy_height);
+                anim_runtime_configs.insert(section_name.to_ascii_uppercase(), anim_runtime_config);
+                anim_theater_flags.insert(section_key.clone(), (anim_theater, anim_new_theater));
+            }
+            let (entries, entry_names) = if vera_only {
+                (&mut vera_entries, &mut vera_entry_names)
+            } else {
+                (&mut entries, &mut entry_names)
+            };
             entry_names.insert(section_key, section_name.to_owned());
             entries.insert(
                 section_name.to_owned(),
@@ -1829,6 +1883,8 @@ impl ArtRegistry {
         let mut registry = ArtRegistry {
             entries,
             entry_names,
+            vera_entries,
+            vera_entry_names,
             can_hide_things,
             occupy_heights,
             anim_runtime_configs,
@@ -1848,6 +1904,8 @@ impl ArtRegistry {
         ArtRegistry {
             entries: LookupMap::default(),
             entry_names: LookupMap::default(),
+            vera_entries: LookupMap::default(),
+            vera_entry_names: LookupMap::default(),
             can_hide_things: HashMap::new(),
             occupy_heights: HashMap::new(),
             anim_runtime_configs: AnimConfigs::default(),
@@ -2452,14 +2510,29 @@ impl ArtRegistry {
     /// Whether any art section declares `Picture=`. Without one, no object
     /// takes the picture path, so callers skip resolving per object.
     pub fn declares_any_picture(&self) -> bool {
-        self.entries.values().any(|entry| entry.picture.is_some())
+        self.entries
+            .values()
+            .chain(self.vera_entries.values())
+            .any(|entry| entry.picture.is_some())
+    }
+
+    /// VERA-only, experimental: section `image_id` as the picture, model and
+    /// cameo declarations read it: an art section, else one with only VERA's
+    /// drawing keys (`vera_entries`), which nothing else finds.
+    fn declared_entry(&self, image_id: &str) -> Option<(&String, &ArtEntry)> {
+        folded_entry_name(&self.entry_names, image_id)
+            .and_then(|name| self.entries.get_key_value(name))
+            .or_else(|| {
+                folded_entry_name(&self.vera_entry_names, image_id)
+                    .and_then(|name| self.vera_entries.get_key_value(name))
+            })
     }
 
     /// Whether art section `section` declares `Picture=`, so its frames are
     /// the picture's and its SHP is never opened (docs/picture-model-art.md).
     pub fn declares_picture(&self, section: &str) -> bool {
-        self.get(section)
-            .is_some_and(|entry| entry.picture.is_some())
+        self.declared_entry(section)
+            .is_some_and(|(_, entry)| entry.picture.is_some())
     }
 
     /// The art section an object's art metadata is read through
@@ -2472,10 +2545,9 @@ impl ArtRegistry {
     ) -> Option<(&str, &PictureDecl)> {
         let image = rules_image.trim();
         let base = if image.is_empty() { type_id } else { image };
-        let (section, entry) = [base, type_id].into_iter().find_map(|id| {
-            folded_entry_name(&self.entry_names, id)
-                .and_then(|name| self.entries.get_key_value(name))
-        })?;
+        let (section, entry) = [base, type_id]
+            .into_iter()
+            .find_map(|id| self.declared_entry(id))?;
         Some((section.as_str(), entry.picture.as_ref()?))
     }
 
@@ -2483,7 +2555,8 @@ impl ArtRegistry {
     /// are the model's and its VXL and HVA are never opened
     /// (docs/picture-model-art.md).
     pub fn declares_model(&self, section: &str) -> bool {
-        self.get(section).is_some_and(|entry| entry.model.is_some())
+        self.declared_entry(section)
+            .is_some_and(|(_, entry)| entry.model.is_some())
     }
 
     /// The art section a voxel object's image resolves to and its `Model=`,
@@ -2495,10 +2568,9 @@ impl ArtRegistry {
     pub fn resolve_declared_model(&self, type_id: &str, image: &str) -> Option<(&str, &ModelDecl)> {
         let image = image.trim();
         let base = if image.is_empty() { type_id } else { image };
-        let (section, entry) = [base, type_id].into_iter().find_map(|id| {
-            folded_entry_name(&self.entry_names, id)
-                .and_then(|name| self.entries.get_key_value(name))
-        })?;
+        let (section, entry) = [base, type_id]
+            .into_iter()
+            .find_map(|id| self.declared_entry(id))?;
         Some((section.as_str(), entry.model.as_ref()?))
     }
 
@@ -2946,7 +3018,9 @@ impl ArtRegistry {
         rules_image: &str,
     ) -> [Option<&str>; 2] {
         let resolved = self.resolve_object_art(type_id, rules_image);
-        let entry = self.get(&resolved.base_art_id);
+        let entry = self
+            .declared_entry(&resolved.base_art_id)
+            .map(|(_, entry)| entry);
         [
             entry.and_then(|entry| entry.cameo_picture.as_deref()),
             entry.and_then(|entry| entry.alt_cameo_picture.as_deref()),

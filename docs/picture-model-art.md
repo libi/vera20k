@@ -319,6 +319,17 @@ A declared file that is missing on one machine changes these values there, as a
 missing SHP does today; the config hash refuses that machine online and in
 saves and replays.
 
+The art keys themselves only choose what is drawn (`art_data::VERA_ART_KEYS`:
+`Picture=`, `PictureSize=`, `CameoPicture=`, `AltCameoPicture=`, `Model=`,
+`ModelSize=`). The art INI's multiplayer digest and the rules parts' art
+section list leave them out, and a section they leave empty
+(`art_data::art_multiplayer_digest`), so an art pack's INI agrees with the
+original's when nothing else differs. A section holding only those keys is no
+art section to the simulation (`art_data::sim_art_section`): the AnimType
+sweep does not read it as an ART body, the image readers do not find it, and
+the art registry keeps it apart, where only the picture, model and cameo
+declarations look. The values the table lists still have to agree.
+
 ## Drawing
 
 The new art never reads an SHP, VXL, HVA, palette or VPL. It reaches the

@@ -1029,7 +1029,17 @@ impl ProcessAssets {
                                 let retail = retail
                                     .and_then(|bytes| IniFile::from_bytes(bytes).ok())
                                     .unwrap_or_else(IniFile::empty);
-                                part.set_sections(used.differing_sections(&retail));
+                                // VERA's drawing keys do not count in the
+                                // art part, as its digest leaves them out
+                                // (`art_data::art_multiplayer_digest`).
+                                let dropped: &[&str] = if ini.id == "art" {
+                                    crate::rules::art_data::VERA_ART_KEYS
+                                } else {
+                                    &[]
+                                };
+                                let sections = used.differing_sections_without(&retail, dropped);
+                                part.changed = !sections.is_empty() || dropped.is_empty();
+                                part.set_sections(sections);
                             }
                         }
                     }

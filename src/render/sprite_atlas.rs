@@ -2595,14 +2595,15 @@ impl<'a> PictureRoutes<'a> {
         theater_name: &'a str,
     ) -> Option<Self> {
         let art = art?;
-        let mut declared = false;
+        // Sections of only VERA's drawing keys declare pictures too, but no
+        // BibShape= or factory door (`ArtRegistry::declares_any_picture`).
+        let declared = art.declares_any_picture();
         let mut bibs = HashMap::new();
         let mut doors = HashMap::new();
         for (name, entry) in art.iter_entries() {
             if entry.picture.is_none() {
                 continue;
             }
-            declared = true;
             let Some(source) = Self::declared(art, name, "") else {
                 continue;
             };
